@@ -25,6 +25,8 @@ let paperTrading = {
     capital: 1000,
     positions: [],
     closedTrades: [],
+    stopLoss: 2.0,   // % below entry for SL
+    takeProfit: 4.0,  // % above entry for TP
     stats: {
         totalTrades: 0, winningTrades: 0, losingTrades: 0,
         winRate: 0, totalPnl: 0, totalFees: 0,
@@ -281,19 +283,42 @@ async function paperTradingStep() {
     const signal = paperSignal(candles, ind);
     const currentPrice = prices.btc;
     
-    // Update unrealized P&L
+    // Update unrealized P&L and check SL/TP
+    let slTpTriggered = false;
+    let slTpReason = '';
     if (paperOpenPosition) {
         const pnl = paperOpenPosition.side === 'LONG'
             ? (currentPrice - paperOpenPosition.entryPrice) * paperOpenPosition.quantity
             : (paperOpenPosition.entryPrice - currentPrice) * paperOpenPosition.quantity;
         paperOpenPosition.pnl = pnl;
         paperOpenPosition.pnlPct = ((currentPrice - paperOpenPosition.entryPrice) / paperOpenPosition.entryPrice) * 100;
+
+        // Check Stop Loss / Take Profit
+        if (paperOpenPosition.side === 'LONG') {
+            if (currentPrice <= paperOpenPosition.stopLoss) {
+                slTpTriggered = true;
+                slTpReason = 'SL';
+            } else if (currentPrice >= paperOpenPosition.takeProfit) {
+                slTpTriggered = true;
+                slTpReason = 'TP';
+            }
+        } else if (paperOpenPosition.side === 'SHORT') {
+            if (currentPrice >= paperOpenPosition.stopLoss) {
+                slTpTriggered = true;
+                slTpReason = 'SL';
+            } else if (currentPrice <= paperOpenPosition.takeProfit) {
+                slTpTriggered = true;
+                slTpReason = 'TP';
+            }
+        }
     }
-    
-    // Execute trades
+
+    // Execute trades (only if not SL/TP triggered)
     if (signal === 'BUY' && !paperOpenPosition) {
         const qty = (paperTrading.capital * paperPositionSize) / currentPrice;
         const fee = currentPrice * qty * 0.001;
+        const sl = currentPrice * (1 - paperTrading.stopLoss / 100);
+        const tp = currentPrice * (1 + paperTrading.takeProfit / 100);
         paperOpenPosition = {
             id: `paper_${now}`,
             side: 'LONG',
@@ -302,17 +327,19 @@ async function paperTradingStep() {
             fee,
             pnl: 0,
             pnlPct: 0,
-            entryTime: now
+            entryTime: now,
+            stopLoss: sl,
+            takeProfit: tp
         };
         paperTrading.positions = [paperOpenPosition];
         paperTrading.capital -= qty * currentPrice + fee;
         paperLastTradeTime = now;
-        console.log(`📈 PAPER BUY: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()}`);
-    } else if (signal === 'SELL' && paperOpenPosition) {
+        console.log(`📈 PAPER BUY: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
+    } else if ((signal === 'SELL' || slTpTriggered) && paperOpenPosition) {
         const pnl = (currentPrice - paperOpenPosition.entryPrice) * paperOpenPosition.quantity;
         const exitFee = currentPrice * paperOpenPosition.quantity * 0.001;
         const netPnl = pnl - paperOpenPosition.fee - exitFee;
-        
+
         const closed = {
             id: paperOpenPosition.id,
             side: 'BUY',
@@ -320,14 +347,19 @@ async function paperTradingStep() {
             quantity: paperOpenPosition.quantity,
             fee: exitFee,
             pnl: netPnl,
-            timestamp: now
+            timestamp: now,
+            exitReason: slTpTriggered ? slTpReason : 'SIGNAL'
         };
         paperTrading.closedTrades.push(closed);
         paperTrading.capital += paperOpenPosition.quantity * currentPrice - exitFee;
         paperOpenPosition = null;
         paperTrading.positions = [];
         paperLastTradeTime = now;
-        console.log(`📉 PAPER SELL: P&L $${netPnl.toFixed(2)}`);
+        if (slTpTriggered) {
+            console.log(`⚡ PAPER ${slTpReason}: P&L $${netPnl.toFixed(2)} @ $${currentPrice.toLocaleString()}`);
+        } else {
+            console.log(`📉 PAPER SELL: P&L $${netPnl.toFixed(2)}`);
+        }
         updatePaperStats();
     }
 }
@@ -423,7 +455,9 @@ const server = http.createServer(async (req, res) => {
             enabled: paperTrading.enabled,
             capital: paperTrading.capital,
             positions: paperTrading.positions,
-            stats: paperTrading.stats
+            stats: paperTrading.stats,
+            stopLoss: paperTrading.stopLoss,
+            takeProfit: paperTrading.takeProfit
         }));
         return;
     }
@@ -474,6 +508,19 @@ const server = http.createServer(async (req, res) => {
         paperOpenPosition = null;
         updatePaperStats();
         res.end(JSON.stringify({ success: true }));
+        return;
+    }
+
+    if (url === '/api/paper-trading/sltp') {
+        const params = new URL(req.url, `http://${req.headers.host}`).searchParams;
+        const sl = parseFloat(params.get('stopLoss'));
+        const tp = parseFloat(params.get('takeProfit'));
+        if (!isNaN(sl) && sl > 0 && sl <= 50) paperTrading.stopLoss = sl;
+        if (!isNaN(tp) && tp > 0 && tp <= 100) paperTrading.takeProfit = tp;
+        res.end(JSON.stringify({
+            stopLoss: paperTrading.stopLoss,
+            takeProfit: paperTrading.takeProfit
+        }));
         return;
     }
     

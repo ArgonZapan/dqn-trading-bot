@@ -1,7 +1,6 @@
 /**
  * DQN Agent - Double DQN + PER + Dueling Networks
  */
-
 class DQNAgent {
     constructor(stateSize = 300, actionSize = 3) {
         this.stateSize = stateSize;
@@ -14,18 +13,17 @@ class DQNAgent {
         this.epsilonDecay = 0.995;
         this.learningRate = 0.0005;
         
-        // Networks (simple linear for now)
+        // Simple network [state -> 256 -> 128 -> actionSize]
         this.onlineNet = this.createNetwork();
         this.targetNet = this.createNetwork();
-        this.copyWeights();
         
-        // Replay buffer
-        this.replayBuffer = require('./replayBuffer');
-        this.buffer = new this.replayBuffer(10000);
+        // Replay Buffer
+        this.buffer = [];
+        this.bufferSize = 10000;
         
         // Training
-        this.targetUpdateInterval = 100;
-        this.trainingInterval = 4;
+        this.targetUpdateFreq = 100;
+        this.trainInterval = 4;
         this.steps = 0;
         this.episode = 0;
         this.totalLoss = 0;
@@ -33,43 +31,47 @@ class DQNAgent {
     }
 
     createNetwork() {
-        // Simple 3-layer network [state -> 256 -> 128 -> actionSize]
-        return {
-            w1: this.randomMatrix(256, this.stateSize),
-            b1: new Array(256).fill(0),
-            w2: this.randomMatrix(128, 256),
-            b2: new Array(128).fill(0),
-            w3: this.randomMatrix(this.actionSize, 128),
-            b3: new Array(this.actionSize).fill(0)
-        };
+        // Simple 3-layer network: state -> 256 -> 128 -> action
+        const layerSizes = [this.stateSize, 256, 128, this.actionSize];
+        const weights = [];
+        const biases = [];
+        
+        for (let l = 0; l < layerSizes.length - 1; l++) {
+            const [fanIn, fanOut] = [layerSizes[l], layerSizes[l + 1]];
+            const limit = Math.sqrt(6 / (fanIn + fanOut));
+            weights.push(
+                Array.from({ length: fanOut }, () =>
+                    Array.from({ length: fanIn }, () => (Math.random() * 2 - 1) * limit)
+                )
+            );
+            biases.push(new Array(fanOut).fill(0));
+        }
+        
+        return { weights, biases, layerSizes };
     }
 
-    randomMatrix(rows, cols) {
-        const limit = Math.sqrt(6 / (rows + cols));
-        return Array.from({ length: rows }, () =>
-            Array.from({ length: cols }, () => (Math.random() * 2 - 1) * limit)
-        );
-    }
-
-    forward(input, net = this.onlineNet) {
-        // Layer 1: input -> 256 (ReLU)
-        let layer = net.w1[0].map((_, i) =>
-            net.w1.reduce((sum, row, j) => sum + row[i] * input[j], 0) + net.b1[i]
-        ).map(x => Math.max(0, x));
+    forward(state, net = this.onlineNet) {
+        let activations = state;
         
-        // Layer 2: 256 -> 128 (ReLU)
-        layer = net.w2[0].map((_, i) =>
-            net.w2.reduce((sum, row, j) => sum + row[i] * layer[j], 0) + net.b2[i]
-        ).map(x => Math.max(0, x));
+        for (let l = 0; l < net.weights.length; l++) {
+            const newActivations = [];
+            for (let i = 0; i < net.weights[l].length; i++) {
+                let sum = net.biases[l][i];
+                for (let j = 0; j < net.weights[l][i].length; j++) {
+                    sum += net.weights[l][i][j] * activations[j];
+                }
+                // ReLU activation (hidden layers)
+                newActivations.push(l < net.weights.length - 1 ? Math.max(0, sum) : sum);
+            }
+            activations = newActivations;
+        }
         
-        // Layer 3: 128 -> actionSize (linear)
-        return net.w3[0].map((_, i) =>
-            net.w3.reduce((sum, row, j) => sum + row[i] * layer[j], 0) + net.b3[i]
-        );
+        return activations;
     }
 
     copyWeights() {
-        this.targetNet = JSON.parse(JSON.stringify(this.onlineNet));
+        this.targetNet.weights = JSON.parse(JSON.stringify(this.onlineNet.weights));
+        this.targetNet.biases = JSON.parse(JSON.stringify(this.onlineNet.biases));
     }
 
     act(state) {
@@ -81,22 +83,20 @@ class DQNAgent {
     }
 
     remember(state, action, reward, nextState, done) {
-        const tdError = this.calcTD(state, action, reward, nextState, done);
-        this.buffer.push({ state, action, reward, nextState, done, priority: tdError + 0.01 });
+        const entry = { state, action, reward, nextState, done };
+        this.buffer.push(entry);
+        if (this.buffer.length > this.bufferSize) this.buffer.shift();
     }
 
-    calcTD(state, action, reward, nextState, done) {
-        const currQ = this.forward(state)[action];
-        const nextQ = Math.max(...this.forward(nextState, this.targetNet));
-        return Math.abs(done ? reward : reward + this.gamma * nextQ - currQ);
-    }
-
-    train() {
-        if (!this.buffer.isReady(32)) return null;
+    replay() {
+        if (this.buffer.length < 32) return null;
         
-        const batch = this.buffer.sample(32);
+        const batch = [];
+        for (let i = 0; i < 32; i++) {
+            batch.push(this.buffer[Math.floor(Math.random() * this.buffer.length)]);
+        }
+        
         let totalLoss = 0;
-        
         for (const exp of batch) {
             const targetQ = this.forward(exp.state);
             const nextQ = this.forward(exp.nextState, this.targetNet);
@@ -108,16 +108,13 @@ class DQNAgent {
                 targetQ[exp.action] = exp.reward + this.gamma * nextQ[bestAction];
             }
             
-            // Simplified gradient update
-            for (let i = 0; i < this.actionSize; i++) {
-                const grad = targetQ[i] - this.forward(exp.state)[i];
-                totalLoss += grad * grad;
-            }
+            totalLoss += Math.abs(targetQ[exp.action] - this.forward(exp.state)[exp.action]);
         }
         
+        // Update epsilon
         this.epsilon = Math.max(this.epsilonMin, this.epsilon * this.epsilonDecay);
         
-        if (this.steps % this.targetUpdateInterval === 0) {
+        if (this.steps % this.targetUpdateFreq === 0) {
             this.copyWeights();
         }
         
@@ -133,7 +130,7 @@ class DQNAgent {
             epsilon: this.epsilon,
             episode: this.episode,
             steps: this.steps,
-            bufferSize: this.buffer.size,
+            bufferSize: this.buffer.length,
             avgLoss: this.lossCount > 0 ? this.totalLoss / this.lossCount : 0
         };
     }

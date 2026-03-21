@@ -637,7 +637,16 @@ class LiveTrader {
       trailingActivation: this.trailingActivation,
       trailingDistance: this.trailingDistance,
       positionSize: this.positionSize,
-      position: positionDetail
+      position: positionDetail,
+      recentTrades: this.closedTrades.slice(-20).map(t => ({
+        side: t.side,
+        entryPrice: t.entryPrice,
+        exitPrice: t.exitPrice,
+        pnl: t.pnl,
+        exitTime: t.exitTime,
+        exitReason: t.exitReason
+      })),
+      lastTradeSide: this.positions.size > 0 ? Array.from(this.positions.values())[0].side : null
     };
   }
 }

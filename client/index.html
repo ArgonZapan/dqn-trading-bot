@@ -709,6 +709,16 @@ Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
 <div id="liveNoPosition" style="text-align:center;padding:16px 0;color:var(--text2);font-size:.7rem;margin-bottom:12px">
 No active position
 </div>
+<div id="livePriceChartSection" style="margin-bottom:12px;display:none">
+<div style="font-size:.65rem;color:var(--text2);margin-bottom:6px;text-transform:uppercase">📊 Live BTC/USDT Price</div>
+<div style="position:relative;height:120px">
+<canvas id="livePriceCanvas"></canvas>
+</div>
+<div style="display:flex;gap:12px;margin-top:6px;font-size:.65rem">
+<span style="color:var(--green)">▲ BUY</span>
+<span style="color:var(--red)">▼ SELL</span>
+</div>
+</div>
 <div class="live-trade-btns">
 <button class="btn" id="liveOpenLongBtn" onclick="liveOpenLong()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,var(--green),#2ea043)">📈 LONG</button>
 <button class="btn" id="liveOpenShortBtn" onclick="liveOpenShort()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,var(--red),#da3633)">📉 SHORT</button>
@@ -1379,6 +1389,9 @@ let paperEquityChart = null;
 let paperEquityVisible = false;
 let liveEquityChart = null;
 let liveEquityData = [];
+let livePriceChart = null;
+let livePriceData = [];
+let liveTradeMarkers = [];
 
 async function initPaperEquityChart() {
   if (paperEquityChart) return;
@@ -1522,6 +1535,9 @@ async function updatePerformance() {
 
 // ========== LIVE TRADING ==========
 let liveActive = false;
+let lastLiveHasPosition = false;
+let lastLivePrice = 0;
+let liveEntryPriceForMarker = null;
 
 async function checkLiveConfig() {
   try {
@@ -1635,6 +1651,35 @@ async function updateLiveTrading() {
       if (liveEquityData.length > 200) liveEquityData.shift();
       await updateLiveEquityChart();
     }
+
+    // Update live price chart
+    if (status.enabled && liveActive && status.currentPrice) {
+      const priceSection = document.getElementById('livePriceChartSection');
+      if (priceSection) priceSection.style.display = 'block';
+      const now = Date.now();
+      livePriceData.push({ time: now, price: status.currentPrice });
+      if (livePriceData.length > 100) livePriceData.shift();
+
+      // Add BUY marker when position opened (long)
+      if (status.hasPosition && !lastLiveHasPosition && status.position?.side === 'LONG') {
+        liveEntryPriceForMarker = status.currentPrice;
+        liveTradeMarkers.push({ time: now, price: status.currentPrice, side: 'BUY' });
+      }
+      // Add SELL marker when position opened (short)
+      if (status.hasPosition && !lastLiveHasPosition && status.position?.side === 'SHORT') {
+        liveEntryPriceForMarker = status.currentPrice;
+        liveTradeMarkers.push({ time: now, price: status.currentPrice, side: 'SELL' });
+      }
+      // Add EXIT marker when position closed
+      if (!status.hasPosition && lastLiveHasPosition && liveEntryPriceForMarker !== null) {
+        liveTradeMarkers.push({ time: now, price: status.currentPrice, side: 'EXIT' });
+        liveEntryPriceForMarker = null;
+      }
+      lastLiveHasPosition = status.hasPosition;
+      lastLivePrice = status.currentPrice;
+
+      await updateLivePriceChart();
+    }
     
   } catch(e) { console.error('updateLiveTrading:', e); }
 }
@@ -1648,6 +1693,10 @@ async function liveStart(testMode = true) {
     }).then(x => x.json());
     if (r.success) {
       liveActive = true;
+      lastLiveHasPosition = false;
+      liveEntryPriceForMarker = null;
+      livePriceData = [];
+      liveTradeMarkers = [];
       log('Live Trading STARTED (' + (testMode ? 'TEST' : 'REAL') + ')', 'system');
     } else {
       log('Live Trading error: ' + (r.error || 'Unknown'), 'system');
@@ -1660,6 +1709,10 @@ async function liveStop() {
   try {
     await fetch('/api/live-trading/stop', { method: 'POST' }).then(x => x.json());
     liveActive = false;
+    lastLiveHasPosition = false;
+    liveEntryPriceForMarker = null;
+    livePriceData = [];
+    liveTradeMarkers = [];
     log('Live Trading STOPPED', 'system');
     await updateLiveTrading();
   } catch(e) {}
@@ -1746,6 +1799,95 @@ async function updateLiveEquityChart() {
   liveEquityChart.data.labels = labels;
   liveEquityChart.data.datasets[0].data = liveEquityData.map(d => d.equity);
   liveEquityChart.update('none');
+}
+
+async function initLivePriceChart() {
+  if (livePriceChart) return;
+  const ctx = document.getElementById('livePriceCanvas').getContext('2d');
+  livePriceChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: 'BTC Price',
+          data: [],
+          borderColor: '#f7931a',
+          backgroundColor: 'rgba(247,147,26,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          borderWidth: 2,
+          yAxisID: 'y'
+        },
+        {
+          label: 'BUY',
+          data: [],
+          borderColor: '#3fb950',
+          backgroundColor: '#3fb950',
+          pointStyle: 'triangle',
+          pointRadius: 7,
+          pointHoverRadius: 9,
+          showLine: false,
+          yAxisID: 'y',
+          type: 'scatter'
+        },
+        {
+          label: 'SELL',
+          data: [],
+          borderColor: '#f85149',
+          backgroundColor: '#f85149',
+          pointStyle: 'triangle',
+          pointRadius: 7,
+          pointHoverRadius: 9,
+          showLine: false,
+          yAxisID: 'y',
+          type: 'scatter'
+        },
+        {
+          label: 'EXIT',
+          data: [],
+          borderColor: '#8b949e',
+          backgroundColor: '#8b949e',
+          pointStyle: 'rectRot',
+          pointRadius: 6,
+          pointHoverRadius: 8,
+          showLine: false,
+          yAxisID: 'y',
+          type: 'scatter'
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false }, tooltip: { enabled: true, callbacks: {
+        label: ctx => ctx.dataset.label === 'BTC Price' ? '$' + ctx.parsed.y.toLocaleString() : ctx.dataset.label
+      }}},
+      scales: {
+        x: { display: false, grid: { display: false } },
+        y: {
+          type: 'linear',
+          display: true,
+          position: 'right',
+          grid: { color: 'rgba(48,54,61,.5)' },
+          ticks: { color: '#f7931a', font: { size: 9 }, callback: v => '$' + v.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0}) }
+        }
+      }
+    }
+  });
+}
+
+async function updateLivePriceChart() {
+  if (!livePriceChart) await initLivePriceChart();
+  const labels = livePriceData.map(d => new Date(d.time).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  livePriceChart.data.labels = labels;
+  livePriceChart.data.datasets[0].data = livePriceData.map(d => ({ x: d.time, y: d.price }));
+  livePriceChart.data.datasets[1].data = liveTradeMarkers.filter(m => m.side === 'BUY').map(m => ({ x: m.time, y: m.price }));
+  livePriceChart.data.datasets[2].data = liveTradeMarkers.filter(m => m.side === 'SELL').map(m => ({ x: m.time, y: m.price }));
+  livePriceChart.data.datasets[3].data = liveTradeMarkers.filter(m => m.side === 'EXIT').map(m => ({ x: m.time, y: m.price }));
+  livePriceChart.update('none');
 }
 
 document.getElementById('liveToggle')?.addEventListener('change', async function() {

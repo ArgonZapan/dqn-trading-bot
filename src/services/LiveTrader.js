@@ -47,6 +47,16 @@ class LiveTrader {
     this.trailingDistance = 0.75;     // % below peak (LONG) / above trough (SHORT)
     this.testMode = true;
 
+    // Safety controls
+    this.maxDailyLoss = 5.0;          // % of session-start capital to stop for the day
+    this.maxDrawdownLimit = 10.0;    // % peak equity drawdown -> emergency close
+    this.maxTradesPerDay = 20;        // max trades per calendar day
+    this.emergencyStopActive = false;
+    this.sessionStartCapital = 1000;
+    this.dailyTradeCount = 0;
+    this.dailyStartDate = null;
+    this.dailyPnL = 0
+
     this.enabled = false;
     this.mode = 'paper';
     this.strategy = 'trend';        // 'trend' | 'momentum' | 'macd' | 'scalping' | 'grid'
@@ -86,6 +96,58 @@ class LiveTrader {
       if (config.autoTrading) this.startAutoTrading();
       else this.stopAutoTrading();
     }
+    if (config.maxDailyLoss) this.maxDailyLoss = Math.max(0.1, Math.min(50, config.maxDailyLoss));
+    if (config.maxDrawdownLimit) this.maxDrawdownLimit = Math.max(0.1, Math.min(100, config.maxDrawdownLimit));
+    if (config.maxTradesPerDay) this.maxTradesPerDay = Math.max(1, config.maxTradesPerDay);
+  }
+
+  checkAllowance() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (this.dailyStartDate !== today) {
+      this.dailyStartDate = today;
+      this.dailyTradeCount = 0;
+      this.dailyPnL = 0;
+    }
+    if (this.emergencyStopActive) {
+      return { allowed: false, reason: 'EMERGENCY_STOP' };
+    }
+    if (this.dailyTradeCount >= this.maxTradesPerDay) {
+      return { allowed: false, reason: 'MAX_TRADES_PER_DAY', limit: this.maxTradesPerDay };
+    }
+    const dailyLossPct = this.sessionStartCapital > 0
+      ? (this.dailyPnL / this.sessionStartCapital) * 100 : 0;
+    if (dailyLossPct <= -this.maxDailyLoss) {
+      return { allowed: false, reason: 'MAX_DAILY_LOSS', loss: dailyLossPct, limit: this.maxDailyLoss };
+    }
+    if (this.maxDrawdownLimit > 0 && this.maxDrawdownPercent >= this.maxDrawdownLimit) {
+      return { allowed: false, reason: 'MAX_DRAWDOWN', dd: this.maxDrawdownPercent, limit: this.maxDrawdownLimit };
+    }
+    return { allowed: true };
+  }
+
+  async triggerEmergencyStop(reason) {
+    if (this.emergencyStopActive) return;
+    this.emergencyStopActive = true;
+    this.stopAutoTrading();
+    console.error('[LiveTrader] EMERGENCY STOP: ' + reason);
+    if (this.positions.has('LONG')) await this.closeLong('EMERGENCY');
+    if (this.positions.has('SHORT')) await this.closeShort('EMERGENCY');
+    this.enabled = false;
+    this.stopHTFUpdates();
+    this.stopPriceUpdates();
+  }
+
+  resetEmergencyStop() {
+    this.emergencyStopActive = false;
+    this.dailyTradeCount = 0;
+    this.dailyPnL = 0;
+    this.dailyStartDate = new Date().toISOString().slice(0, 10);
+  }
+
+  setSafetyLimits(opts) {
+    if (opts.maxDailyLoss !== undefined) this.maxDailyLoss = Math.max(0.1, Math.min(50, opts.maxDailyLoss));
+    if (opts.maxDrawdownLimit !== undefined) this.maxDrawdownLimit = Math.max(0.1, Math.min(100, opts.maxDrawdownLimit));
+    if (opts.maxTradesPerDay !== undefined) this.maxTradesPerDay = Math.max(1, opts.maxTradesPerDay);
   }
 
   isConfigured() { return !!(this.apiKey && this.apiSecret); }
@@ -178,8 +240,12 @@ class LiveTrader {
 
   async autoTradingStep(strategy) {
     if (!this.enabled || this.positions.size > 0) return null;
-    if (this.strategy === 'grid') return null; // Grid uses manual/special triggers
-
+    if (this.strategy === 'grid') return null;
+    const check = this.checkAllowance();
+    if (!check.allowed) {
+      console.log('[LiveTrader] Safety block: ' + check.reason + ' - skip');
+      return null;
+    }
     const candles = await this.fetchCandles(this.symbol, '1m', 100);
     if (candles.length < 21) return null;
     const ind = await this.calculateIndicators();
@@ -382,6 +448,8 @@ class LiveTrader {
 
   async openLong(quantity) {
     if (!this.enabled || this.positions.has('LONG')) return null;
+    const check = this.checkAllowance();
+    if (!check.allowed) { console.log('[LiveTrader] Safety block openLong: ' + check.reason); return null; }
     const qty = quantity || (this.capital * this.positionSize) / this.currentPrice;
     if (qty * this.currentPrice > this.capital) { console.warn('Insufficient capital'); return null; }
 
@@ -438,6 +506,8 @@ class LiveTrader {
 
   async openShort(quantity) {
     if (!this.enabled || this.positions.has('SHORT')) return null;
+    const check = this.checkAllowance();
+    if (!check.allowed) { console.log('[LiveTrader] Safety block openShort: ' + check.reason); return null; }
     const qty = quantity || (this.capital * this.positionSize) / this.currentPrice;
 
     if (this.testMode) return this.simulateShort(qty);
@@ -700,6 +770,11 @@ class LiveTrader {
     this.mode = testMode ? 'paper' : 'live';
     this.positions.clear();
     this.closedTrades = [];
+    this.sessionStartCapital = this.capital || 1000;
+    this.dailyTradeCount = 0;
+    this.dailyPnL = 0;
+    this.dailyStartDate = new Date().toISOString().slice(0, 10);
+    this.emergencyStopActive = false;
     await this.startHTFUpdates();
     this.startPriceUpdates();
   }
@@ -720,9 +795,19 @@ class LiveTrader {
     this.maxDrawdownPercent = 0;
     this.htfState = { h1: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 }, h4: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 } };
     this.stopAutoTrading();
+    this.dailyTradeCount = 0;
+    this.dailyPnL = 0;
+    this.dailyStartDate = new Date().toISOString().slice(0, 10);
+    this.emergencyStopActive = false;
   }
 
   getStats() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (this.dailyStartDate !== today) {
+      this.dailyStartDate = today;
+      this.dailyTradeCount = 0;
+      this.dailyPnL = 0;
+    }
     const closed = this.closedTrades;
     const winning = closed.filter(t => (t.pnl || 0) > 0);
     const losing = closed.filter(t => (t.pnl || 0) <= 0);
@@ -764,16 +849,40 @@ class LiveTrader {
         maxDrawdownPercent: this.maxDrawdownPercent,
         avgWin,
         avgLoss,
-        sharpeRatio: 0,
         currentStreak,
         bestStreak,
         worstStreak
+      },
+      safety: {
+        emergencyStopActive: this.emergencyStopActive,
+        sessionStartCapital: this.sessionStartCapital,
+        dailyPnL: this.dailyPnL,
+        dailyPnLPct: this.sessionStartCapital > 0 ? (this.dailyPnL / this.sessionStartCapital) * 100 : 0,
+        dailyTradeCount: this.dailyTradeCount,
+        maxDailyLoss: this.maxDailyLoss,
+        maxDrawdownLimit: this.maxDrawdownLimit
       }
     };
   }
 
   getStatus() {
-    // Include trailing stop info for open positions
+    const today = new Date().toISOString().slice(0, 10);
+    if (this.dailyStartDate !== today) {
+      this.dailyStartDate = today;
+      this.dailyTradeCount = 0;
+      this.dailyPnL = 0;
+    }
+    const safetyStatus = {
+      emergencyStopActive: this.emergencyStopActive,
+      maxDailyLoss: this.maxDailyLoss,
+      maxDrawdownLimit: this.maxDrawdownLimit,
+      maxTradesPerDay: this.maxTradesPerDay,
+      sessionStartCapital: this.sessionStartCapital,
+      dailyPnL: this.dailyPnL,
+      dailyPnLPct: this.sessionStartCapital > 0 ? (this.dailyPnL / this.sessionStartCapital) * 100 : 0,
+      dailyTradeCount: this.dailyTradeCount,
+      allowance: this.checkAllowance()
+    };
     let positionDetail = null;
     if (this.positions.size > 0) {
       const pos = Array.from(this.positions.values())[0];
@@ -819,7 +928,8 @@ class LiveTrader {
         exitTime: t.exitTime,
         exitReason: t.exitReason
       })),
-      lastTradeSide: this.positions.size > 0 ? Array.from(this.positions.values())[0].side : null
+      lastTradeSide: this.positions.size > 0 ? Array.from(this.positions.values())[0].side : null,
+      safety: safetyStatus
     };
   }
 }

@@ -1,5 +1,5 @@
 /**
- * DQN Trading Bot - Main Server
+ * DQN Trading Bot - Main Server with RL
  */
 const http = require('http');
 const fs = require('fs');
@@ -14,7 +14,14 @@ let prices = { btc: 0, eth: 0, sol: 0 };
 let portfolio = { usdt: 1000, btc: 0, eth: 0, sol: 0 };
 let trades = [];
 let tradingActive = false;
-let metrics = { epsilon: 1.0, episode: 0, bufferSize: 0, loss: 0, tradesCount: 0 };
+let metrics = { epsilon: 1.0, episode: 0, bufferSize: 0, loss: 0, steps: 0 };
+
+// RL Components
+const Env = require('../src/environment');
+const Agent = require('../src/dqnAgent');
+
+const env = new Env('BTCUSDT', 60);
+const agent = new Agent(300, 3);
 
 // Fetch helper
 function fetchJSON(url) {
@@ -27,44 +34,77 @@ function fetchJSON(url) {
     });
 }
 
-// Server
+// API Server
 const server = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'application/json');
     
-    const u = req.url.split('?')[0];
+    const url = req.url.split('?')[0];
     
-    // API
-    if (u === '/api/status') { res.end(JSON.stringify({ status: 'running', tradingActive, prices, portfolio, metrics, tradesCount: trades.length })); return; }
-    if (u === '/api/prices') { res.end(JSON.stringify(prices)); return; }
-    if (u === '/api/portfolio') { res.end(JSON.stringify(portfolio)); return; }
-    if (u === '/api/metrics') { res.end(JSON.stringify(metrics)); return; }
-    if (u === '/api/trades') { res.end(JSON.stringify(trades.slice(-20))); return; }
+    if (url === '/api/status') {
+        res.end(JSON.stringify({ 
+            status: 'running', 
+            tradingActive,
+            prices,
+            portfolio,
+            metrics: agent.getMetrics(),
+            tradesCount: trades.length
+        }));
+        return;
+    }
     
-    if (u === '/api/trading/start') { tradingActive = true; res.end(JSON.stringify({ success: true })); return; }
-    if (u === '/api/trading/stop') { tradingActive = false; res.end(JSON.stringify({ success: true })); return; }
+    if (url === '/api/prices') {
+        res.end(JSON.stringify(prices));
+        return;
+    }
     
-    if (u === '/api/trading/execute') {
-        // Execute trade (paper)
-        const symbol = req.method === 'POST' ? 'BTC' : 'BTC';
-        const price = prices.btc;
-        if (tradingActive && price > 0) {
-            const action = Math.random() > 0.5 ? 'BUY' : 'SELL';
-            trades.push({ time: Date.now(), action, price, symbol });
-            metrics.tradesCount++;
-        }
+    if (url === '/api/portfolio') {
+        res.end(JSON.stringify(portfolio));
+        return;
+    }
+    
+    if (url === '/api/metrics') {
+        res.end(JSON.stringify(agent.getMetrics()));
+        return;
+    }
+    
+    if (url === '/api/trades') {
+        res.end(JSON.stringify(trades.slice(-20)));
+        return;
+    }
+    
+    if (url === '/api/trading/start') {
+        tradingActive = true;
+        agent.startEpisode();
+        res.end(JSON.stringify({ success: true }));
+        return;
+    }
+    
+    if (url === '/api/trading/stop') {
+        tradingActive = false;
+        res.end(JSON.stringify({ success: true }));
+        return;
+    }
+    
+    if (url === '/api/trading/execute') {
+        // Manual trade
+        executeTrade('manual');
         res.end(JSON.stringify({ success: true }));
         return;
     }
     
     // Static files
     res.setHeader('Content-Type', 'text/html');
-    const fp = path.join(__dirname, '..', u === '/' ? 'client/index.html' : u);
-    if (fs.existsSync(fp)) { res.end(fs.readFileSync(fp)); return; }
-    res.writeHead(404); res.end('Not Found');
+    const fp = path.join(__dirname, '..', url === '/' ? 'client/index.html' : url);
+    if (fs.existsSync(fp)) {
+        res.end(fs.readFileSync(fp));
+        return;
+    }
+    res.writeHead(404);
+    res.end('Not Found');
 });
 
-// Price updates
+// Trading logic
 async function updatePrices() {
     try {
         const [btc, eth, sol] = await Promise.all([
@@ -72,29 +112,51 @@ async function updatePrices() {
             fetchJSON('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT'),
             fetchJSON('https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT')
         ]);
-        prices = { btc: parseFloat(btc.price), eth: parseFloat(eth.price), sol: parseFloat(sol.price) };
-    } catch(e) {}
+        prices = {
+            btc: parseFloat(btc.price),
+            eth: parseFloat(eth.price),
+            sol: parseFloat(sol.price)
+        };
+    } catch (e) {}
 }
 
-// Simple trading logic (demo)
-function tradingTick() {
+function executeTrade(reason = 'agent') {
     if (!tradingActive || prices.btc === 0) return;
-    // Random demo trade
-    if (Math.random() > 0.98) {
-        const action = Math.random() > 0.5 ? 'BUY' : 'SELL';
-        trades.push({ time: Date.now(), action, price: prices.btc, symbol: 'BTCUSDT' });
-        if (action === 'BUY') {
-            portfolio.btc += portfolio.usdt * 0.95 / prices.btc;
-            portfolio.usdt *= 0.05;
-        } else {
-            portfolio.usdt += portfolio.btc * prices.btc * 0.995;
+    
+    const state = env.getState();
+    const action = agent.act(state);
+    
+    if (action === 1) { // BUY
+        const quantity = (portfolio.usdt * 0.95) / prices.btc;
+        portfolio.btc += quantity;
+        portfolio.usdt *= 0.05;
+        trades.push({ time: Date.now(), action: 'BUY', price: prices.btc, quantity });
+    } else if (action === 2) { // SELL
+        if (portfolio.btc > 0) {
+            const pnl = (prices.btc - trades[trades.length-1]?.price || prices.btc) * portfolio.btc;
+            portfolio.usdt += portfolio.btc * prices.btc * 0.999; // after fee
+            trades.push({ time: Date.now(), action: 'SELL', price: prices.btc, quantity: portfolio.btc, pnl });
             portfolio.btc = 0;
         }
-        metrics.tradesCount++;
     }
+    
+    // Store experience
+    const newState = env.getState();
+    const reward = (action === 1 || action === 2) ? 0.001 : 0;
+    agent.remember(state, action, reward, newState, false);
+    
+    // Train
+    const loss = agent.train();
+    if (loss !== null) metrics.loss = loss;
+    metrics.bufferSize = agent.buffer.size();
 }
 
-// Start
+function tradingTick() {
+    if (!tradingActive) return;
+    executeTrade();
+}
+
+// Routes
 setInterval(updatePrices, 3000);
 setInterval(tradingTick, 5000);
 updatePrices();
@@ -104,9 +166,11 @@ server.listen(PORT, HOST, () => {
     for (const n of Object.keys(nets)) {
         for (const i of nets[n]) {
             if (i.family === 'IPv4' && !i.internal) {
-                console.log(`DQN Bot: http://${i.address}:${PORT}`);
+                console.log(`DQN Trading Bot: http://${i.address}:${PORT}`);
                 break;
             }
         }
     }
 });
+
+process.on('SIGTERM', () => { server.close(); process.exit(0); });

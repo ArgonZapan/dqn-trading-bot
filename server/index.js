@@ -472,6 +472,29 @@ function updatePaperStats() {
         if (dd > maxDD) { maxDD = dd; maxDDPct = ddPct; }
     }
 
+    // Sharpe ratio (assuming risk-free rate = 0 for simplicity)
+    // Sharpe = mean(return) / std(return) * sqrt(252) (annualized)
+    let sharpeRatio = 0;
+    if (closed.length > 1) {
+        const returns = closed.map(t => t.pnl / 1000); // return relative to $1000 capital
+        const meanReturn = returns.reduce((s, r) => s + r, 0) / returns.length;
+        const variance = returns.reduce((s, r) => s + Math.pow(r - meanReturn, 2), 0) / returns.length;
+        const stdReturn = Math.sqrt(variance);
+        if (stdReturn > 0) {
+            sharpeRatio = (meanReturn / stdReturn) * Math.sqrt(252); // annualized
+        }
+    }
+
+    // Annualized return: assume 500 trades/day * 365 days, adjusted for actual trades
+    // Or simpler: estimate trades per hour and project yearly
+    let annualizedReturn = 0;
+    if (closed.length > 0 && totalPnl !== 0) {
+        const currentCapital = paperTrading.capital;
+        const yearsRunning = Math.max(1, closed.length / 500); // rough estimate: 500 trades/year
+        const totalReturn = ((currentCapital - 1000) / 1000); // total return fraction
+        annualizedReturn = (Math.pow(1 + totalReturn, 1 / yearsRunning) - 1) * 100;
+    }
+
     paperTrading.stats = {
         totalTrades: closed.length,
         winningTrades: winning.length,
@@ -484,7 +507,8 @@ function updatePaperStats() {
         maxDrawdownPercent: maxDDPct,
         avgWin,
         avgLoss,
-        sharpeRatio: 0,
+        sharpeRatio,
+        annualizedReturn,
         currentStreak: calcStreak(closed, 'current'),
         bestStreak: calcStreak(closed, 'best'),
         worstStreak: calcStreak(closed, 'worst')
@@ -1012,6 +1036,41 @@ const server = http.createServer(async (req, res) => {
     // Paper trading equity curve
     if (url === '/api/paper-trading/equity-curve') {
         res.end(JSON.stringify(paperEquityCurve));
+        return;
+    }
+    
+    // GET /api/paper-trading/performance - full performance summary
+    if (url === '/api/paper-trading/performance') {
+        updatePaperStats();
+        const s = paperTrading.stats;
+        // Enrich with avg profit per trade and best/worst trade
+        const closed = paperTrading.closedTrades;
+        const bestTrade = closed.length > 0 ? Math.max(...closed.map(t => t.pnl)) : 0;
+        const worstTrade = closed.length > 0 ? Math.min(...closed.map(t => t.pnl)) : 0;
+        const avgProfitPerTrade = closed.length > 0 ? s.totalPnl / closed.length : 0;
+        res.json({
+            totalTrades: s.totalTrades,
+            winningTrades: s.winningTrades,
+            losingTrades: s.losingTrades,
+            winRate: s.winRate,
+            totalPnl: s.totalPnl,
+            totalFees: s.totalFees,
+            avgProfitPerTrade,
+            profitFactor: s.profitFactor,
+            bestTrade,
+            worstTrade,
+            maxDrawdown: s.maxDrawdown,
+            maxDrawdownPercent: s.maxDrawdownPercent,
+            sharpeRatio: s.sharpeRatio,
+            annualizedReturn: s.annualizedReturn,
+            currentStreak: s.currentStreak,
+            bestStreak: s.bestStreak,
+            worstStreak: s.worstStreak,
+            avgWin: s.avgWin,
+            avgLoss: s.avgLoss,
+            currentCapital: paperTrading.capital,
+            equityPeak: paperEquityCurve.length > 0 ? Math.max(...paperEquityCurve.map(e => e.equity)) : 1000
+        });
         return;
     }
     

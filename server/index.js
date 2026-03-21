@@ -1,5 +1,5 @@
 /**
- * DQN Trading Bot - Main Server with RL Training
+ * DQN Trading Bot - Main Server with RL Training + Paper Trading
  */
 const http = require('http');
 const fs = require('fs');
@@ -17,6 +17,26 @@ let tradingActive = false;
 let trainingActive = false;
 let metrics = { epsilon: 1.0, episode: 0, bufferSize: 0, loss: 0, steps: 0, isTraining: false };
 let lastModelSave = 0;
+
+// Paper Trading State
+let paperTrading = {
+    enabled: false,
+    capital: 1000,
+    positions: [],
+    closedTrades: [],
+    stats: {
+        totalTrades: 0, winningTrades: 0, losingTrades: 0,
+        winRate: 0, totalPnl: 0, totalFees: 0,
+        profitFactor: 0, maxDrawdown: 0, maxDrawdownPercent: 0,
+        avgWin: 0, avgLoss: 0, sharpeRatio: 0,
+        currentStreak: 0, bestStreak: 0, worstStreak: 0
+    }
+};
+let paperCandles = [];
+let paperStrategy = 'trend';
+let paperPositionSize = 0.95;
+let paperLastTradeTime = 0;
+const PAPER_TRADE_COOLDOWN = 30000; // 30s between trades
 
 // Model persistence config
 const MODEL_SAVE_INTERVAL_MS = parseInt(process.env.MODEL_SAVE_INTERVAL_MS || '600000'); // 10 min default
@@ -61,7 +81,7 @@ async function loadLastModel() {
 // Save model
 async function saveModel() {
     const now = Date.now();
-    if (now - lastModelSave < MODEL_SAVE_INTERVAL_MS) return; // Respect interval
+    if (now - lastModelSave < MODEL_SAVE_INTERVAL_MS) return;
     lastModelSave = now;
     
     const filename = `dqn-ep${agent.episode}.json`;
@@ -79,6 +99,232 @@ function fetchJSON(url) {
             r.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
         }).on('error', reject);
     });
+}
+
+// Fetch Binance klines (candles)
+async function fetchCandles(symbol = 'BTCUSDT', interval = '1m', limit = 100) {
+    try {
+        const data = await fetchJSON(
+            `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+        );
+        return data.map(k => ({
+            time: k[0],
+            open: parseFloat(k[1]),
+            high: parseFloat(k[2]),
+            low: parseFloat(k[3]),
+            close: parseFloat(k[4]),
+            volume: parseFloat(k[5])
+        }));
+    } catch (e) {
+        return [];
+    }
+}
+
+// Simple technical indicators
+function calcIndicators(candles) {
+    if (candles.length < 50) return { rsi: 50, ema9: 0, ema21: 0, macd: { value: 0, signal: 0, histogram: 0 } };
+    
+    const closes = candles.map(c => c.close);
+    const rsi = calcRSI(closes, 14);
+    const ema9 = calcEMA(closes, 9);
+    const ema21 = calcEMA(closes, 21);
+    const ema50 = calcEMA(closes, 50);
+    const macd = calcMACD(closes);
+    
+    return { rsi, ema9, ema21, ema50, macd };
+}
+
+function calcRSI(prices, period = 14) {
+    if (prices.length < period + 1) return 50;
+    let gains = 0, losses = 0;
+    for (let i = prices.length - period; i < prices.length; i++) {
+        const diff = prices[i] - prices[i-1];
+        if (diff > 0) gains += diff;
+        else losses += Math.abs(diff);
+    }
+    const avgGain = gains / period;
+    const avgLoss = losses / period;
+    if (avgLoss === 0) return 100;
+    const rs = avgGain / avgLoss;
+    return 100 - (100 / (1 + rs));
+}
+
+function calcEMA(prices, period) {
+    if (prices.length < period) return prices[prices.length - 1];
+    const k = 2 / (period + 1);
+    let ema = prices.slice(0, period).reduce((s, p) => s + p, 0) / period;
+    for (let i = period; i < prices.length; i++) {
+        ema = prices[i] * k + ema * (1 - k);
+    }
+    return ema;
+}
+
+function calcMACD(prices, fast = 12, slow = 26, signal = 9) {
+    const emaFast = calcEMA(prices, fast);
+    const emaSlow = calcEMA(prices, slow);
+    const macdLine = emaFast - emaSlow;
+    // Simplified - just return current values
+    return { value: macdLine, signal: macdLine * 0.9, histogram: macdLine * 0.1 };
+}
+
+// Paper trading signal
+function paperSignal(candles, ind) {
+    const last = candles[candles.length - 1];
+    if (!last || !ind.ema9) return 'HOLD';
+    
+    if (paperStrategy === 'trend') {
+        if (ind.ema9 > ind.ema21 && last.close > ind.ema9) return 'BUY';
+        if (ind.ema9 < ind.ema21 && last.close < ind.ema9) return 'SELL';
+    } else if (paperStrategy === 'momentum') {
+        if (ind.rsi < 35) return 'BUY';
+        if (ind.rsi > 65) return 'SELL';
+    } else if (paperStrategy === 'macd') {
+        if (ind.macd.histogram > 0) return 'BUY';
+        if (ind.macd.histogram < 0) return 'SELL';
+    }
+    return 'HOLD';
+}
+
+// Update paper trading stats
+function updatePaperStats() {
+    const closed = paperTrading.closedTrades;
+    const winning = closed.filter(t => t.pnl > 0);
+    const losing = closed.filter(t => t.pnl <= 0);
+    const totalPnl = closed.reduce((s, t) => s + t.pnl, 0);
+    const totalFees = closed.reduce((s, t) => s + t.fee, 0);
+    const winRate = closed.length > 0 ? (winning.length / closed.length) * 100 : 0;
+    const avgWin = winning.length > 0 ? winning.reduce((s, t) => s + t.pnl, 0) / winning.length : 0;
+    const avgLoss = losing.length > 0 ? losing.reduce((s, t) => s + t.pnl, 0) / losing.length : 0;
+    const profitFactor = totalPnl > 0 && avgLoss !== 0 ? Math.abs(avgWin / avgLoss) : totalPnl > 0 ? Infinity : 0;
+
+    // Max drawdown
+    let peak = paperTrading.capital;
+    let maxDD = 0;
+    let maxDDPct = 0;
+    for (const t of closed) {
+        paperTrading.capital += t.pnl;
+        if (paperTrading.capital > peak) peak = paperTrading.capital;
+        const dd = peak - paperTrading.capital;
+        const ddPct = peak > 0 ? (dd / peak) * 100 : 0;
+        if (dd > maxDD) { maxDD = dd; maxDDPct = ddPct; }
+    }
+    // Reset capital to current balance
+    paperTrading.capital = paperPositionsValue() + paperFreeCapital();
+
+    paperTrading.stats = {
+        totalTrades: closed.length,
+        winningTrades: winning.length,
+        losingTrades: losing.length,
+        winRate,
+        totalPnl,
+        totalFees,
+        profitFactor,
+        maxDrawdown: maxDD,
+        maxDrawdownPercent: maxDDPct,
+        avgWin,
+        avgLoss,
+        sharpeRatio: 0,
+        currentStreak: calcStreak(closed, 'current'),
+        bestStreak: calcStreak(closed, 'best'),
+        worstStreak: calcStreak(closed, 'worst')
+    };
+}
+
+function calcStreak(trades, type) {
+    let streak = 0, best = 0, worst = 0, current = 0;
+    for (const t of trades) {
+        if (t.pnl > 0) {
+            streak = streak > 0 ? streak + 1 : 1;
+            best = Math.max(best, streak);
+        } else {
+            streak = streak < 0 ? streak - 1 : -1;
+            worst = Math.min(worst, streak);
+        }
+    }
+    current = streak;
+    if (type === 'current') return current;
+    if (type === 'best') return best;
+    return worst;
+}
+
+function paperPositionsValue() {
+    return paperTrading.positions.reduce((s, p) => {
+        if (p.side === 'LONG') return s + p.quantity * prices.btc;
+        return s;
+    }, 0);
+}
+
+function paperFreeCapital() {
+    return paperTrading.capital;
+}
+
+// Paper trading loop
+let paperOpenPosition = null; // null | { side, entryPrice, quantity }
+
+async function paperTradingStep() {
+    if (!paperTrading.enabled) return;
+    if (prices.btc === 0) return;
+    
+    const now = Date.now();
+    if (now - paperLastTradeTime < PAPER_TRADE_COOLDOWN) return;
+    
+    // Fetch fresh candles
+    const candles = await fetchCandles('BTCUSDT', '1m', 60);
+    if (candles.length < 50) return;
+    
+    const ind = calcIndicators(candles);
+    const signal = paperSignal(candles, ind);
+    const currentPrice = prices.btc;
+    
+    // Update unrealized P&L
+    if (paperOpenPosition) {
+        const pnl = paperOpenPosition.side === 'LONG'
+            ? (currentPrice - paperOpenPosition.entryPrice) * paperOpenPosition.quantity
+            : (paperOpenPosition.entryPrice - currentPrice) * paperOpenPosition.quantity;
+        paperOpenPosition.pnl = pnl;
+        paperOpenPosition.pnlPct = ((currentPrice - paperOpenPosition.entryPrice) / paperOpenPosition.entryPrice) * 100;
+    }
+    
+    // Execute trades
+    if (signal === 'BUY' && !paperOpenPosition) {
+        const qty = (paperTrading.capital * paperPositionSize) / currentPrice;
+        const fee = currentPrice * qty * 0.001;
+        paperOpenPosition = {
+            id: `paper_${now}`,
+            side: 'LONG',
+            entryPrice: currentPrice,
+            quantity: qty,
+            fee,
+            pnl: 0,
+            pnlPct: 0,
+            entryTime: now
+        };
+        paperTrading.positions = [paperOpenPosition];
+        paperTrading.capital -= qty * currentPrice + fee;
+        paperLastTradeTime = now;
+        console.log(`📈 PAPER BUY: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()}`);
+    } else if (signal === 'SELL' && paperOpenPosition) {
+        const pnl = (currentPrice - paperOpenPosition.entryPrice) * paperOpenPosition.quantity;
+        const exitFee = currentPrice * paperOpenPosition.quantity * 0.001;
+        const netPnl = pnl - paperOpenPosition.fee - exitFee;
+        
+        const closed = {
+            id: paperOpenPosition.id,
+            side: 'BUY',
+            price: currentPrice,
+            quantity: paperOpenPosition.quantity,
+            fee: exitFee,
+            pnl: netPnl,
+            timestamp: now
+        };
+        paperTrading.closedTrades.push(closed);
+        paperTrading.capital += paperOpenPosition.quantity * currentPrice - exitFee;
+        paperOpenPosition = null;
+        paperTrading.positions = [];
+        paperLastTradeTime = now;
+        console.log(`📉 PAPER SELL: P&L $${netPnl.toFixed(2)}`);
+        updatePaperStats();
+    }
 }
 
 // API Server
@@ -128,6 +374,78 @@ const server = http.createServer(async (req, res) => {
             epsilons: episodeEpsilons,
             equity: episodeEquity
         }));
+        return;
+    }
+    
+    // Paper Trading endpoints
+    if (url === '/api/paper-trading') {
+        res.end(JSON.stringify({
+            enabled: paperTrading.enabled,
+            capital: paperTrading.capital,
+            positions: paperTrading.positions,
+            stats: paperTrading.stats
+        }));
+        return;
+    }
+    
+    if (url === '/api/paper-trading/start') {
+        paperTrading.enabled = true;
+        paperTrading.capital = 1000;
+        paperTrading.positions = [];
+        paperTrading.closedTrades = [];
+        paperOpenPosition = null;
+        updatePaperStats();
+        console.log('📈 Paper Trading ENABLED');
+        res.end(JSON.stringify({ success: true, enabled: true }));
+        return;
+    }
+    
+    if (url === '/api/paper-trading/stop') {
+        // Close open positions at market
+        if (paperOpenPosition && prices.btc > 0) {
+            const currentPrice = prices.btc;
+            const pnl = (currentPrice - paperOpenPosition.entryPrice) * paperOpenPosition.quantity;
+            const exitFee = currentPrice * paperOpenPosition.quantity * 0.001;
+            const netPnl = pnl - paperOpenPosition.fee - exitFee;
+            paperTrading.capital += paperOpenPosition.quantity * currentPrice - exitFee;
+            paperTrading.closedTrades.push({
+                id: paperOpenPosition.id,
+                side: 'BUY',
+                price: currentPrice,
+                quantity: paperOpenPosition.quantity,
+                fee: exitFee,
+                pnl: netPnl,
+                timestamp: Date.now()
+            });
+            paperOpenPosition = null;
+            paperTrading.positions = [];
+        }
+        paperTrading.enabled = false;
+        updatePaperStats();
+        console.log('📉 Paper Trading DISABLED');
+        res.end(JSON.stringify({ success: true, enabled: false }));
+        return;
+    }
+    
+    if (url === '/api/paper-trading/reset') {
+        paperTrading.capital = 1000;
+        paperTrading.positions = [];
+        paperTrading.closedTrades = [];
+        paperOpenPosition = null;
+        updatePaperStats();
+        res.end(JSON.stringify({ success: true }));
+        return;
+    }
+    
+    if (url === '/api/paper-trading/strategy') {
+        const params = new URL(req.url, `http://${req.headers.host}`).searchParams;
+        const strategy = params.get('strategy');
+        if (strategy && ['trend', 'momentum', 'macd'].includes(strategy)) {
+            paperStrategy = strategy;
+            res.end(JSON.stringify({ success: true, strategy: paperStrategy }));
+        } else {
+            res.end(JSON.stringify({ strategy: paperStrategy }));
+        }
         return;
     }
     
@@ -245,7 +563,8 @@ async function updatePrices() {
 
 // Routes
 setInterval(updatePrices, 3000);
-setInterval(trainingStep, 1000); // Training tick every second
+setInterval(trainingStep, 1000);
+setInterval(paperTradingStep, 5000); // Paper trading check every 5s
 updatePrices();
 
 // Load last model on start

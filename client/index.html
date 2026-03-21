@@ -227,6 +227,53 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 </div>
 </div>
 </div>
+<div class="card" style="margin-top:16px">
+<div class="card-header">🎮 Paper Trading</div>
+<div class="card-body">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+<div style="font-size:.75rem;color:var(--text2)">Tryb papierowy - handel bez realnych środków</div>
+<label class="switch">
+<input type="checkbox" id="paperToggle">
+<span class="slider"></span>
+</label>
+</div>
+<select id="paperStrategy" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:.75rem;margin-bottom:12px">
+<option value="trend">📈 Trend Following</option>
+<option value="momentum">🚀 Momentum</option>
+<option value="macd">⚡ MACD Crossover</option>
+</select>
+<div class="metrics-grid">
+<div class="metric-box">
+<div class="metric-label">Kapitał</div>
+<div class="metric-value green" id="paperCapital">$1000</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Trades</div>
+<div class="metric-value" id="paperTrades">0</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Win Rate</div>
+<div class="metric-value green" id="paperWinRate">0%</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">P&L</div>
+<div class="metric-value" id="paperPnl">$0</div>
+</div>
+</div>
+<div style="display:flex;gap:8px;margin-top:12px">
+<button class="btn" id="paperReset" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,var(--orange),#b35900)">🔄 RESET</button>
+</div>
+<div id="paperStatus" style="margin-top:8px;font-size:.65rem;color:var(--text2)">Status: Stopped</div>
+</div>
+</div>
+<style>
+.switch{position:relative;display:inline-block;width:44px;height:24px}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:var(--bg);border:1px solid var(--border);border-radius:24px;transition:.3s}
+.slider:before{position:absolute;content:"";height:18px;width:18px;left:2px;bottom:2px;background:var(--text2);border-radius:50%;transition:.3s}
+input:checked+.slider{background:var(--green);border-color:var(--green)}
+input:checked+.slider:before{transform:translateX(20px);background:#fff}
+</style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 let trading=false;
@@ -470,7 +517,47 @@ document.getElementById('trainBtn').onclick=async()=>{
   b.className=trading?'btn stop':'btn';
 };
 log('Dashboard loaded','system');
+// Paper Trading
+let paperActive=false;
+document.getElementById('paperToggle').onchange=async function(){
+  if(this.checked){
+    const r=await fetch('/api/paper-trading/start').then(x=>x.json());
+    if(r.success){paperActive=true;log('Paper Trading STARTED','system')}
+    else{this.checked=false;paperActive=false}
+  } else {
+    await fetch('/api/paper-trading/stop').then(x=>x.json());
+    paperActive=false;log('Paper Trading STOPPED','system')
+  }
+};
+document.getElementById('paperReset').onclick=async function(){
+  await fetch('/api/paper-trading/reset').then(x=>x.json());
+  log('Paper Trading RESET','system');
+  updatePaper();
+};
+document.getElementById('paperStrategy').onchange=async function(){
+  await fetch('/api/paper-trading/strategy?strategy='+this.value).then(x=>x.json());
+  log('Strategy: '+this.value,'system');
+};
+async function updatePaper(){
+  try {
+    const d=await fetch('/api/paper-trading').then(r=>r.json());
+    const s=d.stats||{};
+    document.getElementById('paperCapital').textContent='$'+(d.capital||1000).toFixed(2);
+    document.getElementById('paperTrades').textContent=s.totalTrades||0;
+    document.getElementById('paperWinRate').textContent=(s.winRate||0).toFixed(1)+'%';
+    const pnl=s.totalPnl||0;
+    const pnlEl=document.getElementById('paperPnl');
+    pnlEl.textContent=(pnl>=0?'+$':' ')+pnl.toFixed(2);
+    pnlEl.className=pnl>=0?'metric-value green':'metric-value red';
+    document.getElementById('paperStatus').textContent='Status: '+(d.enabled?'Running':'Stopped');
+    if(d.enabled!==undefined)document.getElementById('paperToggle').checked=d.enabled;
+  } catch(e){}
+}
 setInterval(update,2000);
+setInterval(updatePaper,2000);
+update();
+updatePaper();
+
 update();
 </script>
 </body>

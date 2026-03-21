@@ -61,6 +61,14 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .log-entry.buy{background:rgba(63,185,80,.15);color:var(--green)}
 .log-entry.sell{background:rgba(248,81,73,.15);color:var(--red)}
 .log-entry.system{background:rgba(88,166,255,.1);color:var(--blue)}
+.history-row{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border-radius:8px;font-size:.7rem;cursor:pointer;transition:background .15s}
+.history-row:hover{background:var(--bg3)}
+.history-row .ep{color:var(--blue);font-weight:600;min-width:40px}
+.history-row .pnl{font-weight:600;min-width:60px}
+.history-row .pnl.pos{color:var(--green)}
+.history-row .pnl.neg{color:var(--red)}
+.history-row .stats{color:var(--text2);flex:1;font-size:.65rem}
+.history-row .dd{color:var(--orange);font-size:.65rem;min-width:50px;text-align:right}
 .chart-placeholder{background:var(--bg);border-radius:12px;height:200px;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:.8rem;border:1px dashed var(--border)}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .card{animation:fadeIn .3s ease}
@@ -113,6 +121,14 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <span style="color:var(--red)">● SELL</span>
 <span style="color:var(--blue)">● Epsilon</span>
 <span id="equityLegend" style="color:var(--purple);display:none">● Equity %</span>
+</div>
+</div>
+</div>
+<div class="card" style="margin-top:20px">
+<div class="card-header">📜 Historia epizodów</div>
+<div class="card-body" style="padding:12px">
+<div style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto" id="historyList">
+<div style="color:var(--text2);font-size:.7rem;text-align:center;padding:20px">Brak danych - uruchom trening</div>
 </div>
 </div>
 </div>
@@ -355,17 +371,46 @@ async function updateChart(){
       const equityData=d.equity.map(e=>({x:e.step,y:((e.equity-baseEquity)/baseEquity)*100}));
       chart.data.datasets[4].data=equityData;
       chart.data.datasets[4]._metric='equity';
-      // Show y3 if equity data exists
       chart.options.scales.y3.display=true;
       chart.options.scales.y3.min=Math.min(...equityData.map(e=>e.y))-1;
       chart.options.scales.y3.max=Math.max(...equityData.map(e=>e.y))+1;
-      // Add equity legend item
       document.getElementById('equityLegend').style.display='';
     } else {
       chart.options.scales.y3.display=false;
     }
     chart.update('none');
   } catch(e){}
+}
+
+async function updateHistory(){
+  try {
+    const hist=await fetch('/api/episode-history').then(r=>r.json());
+    const el=document.getElementById('historyList');
+    if(!hist||hist.length===0){
+      el.innerHTML='<div style="color:var(--text2);font-size:.7rem;text-align:center;padding:20px">Brak danych - uruchom trening</div>';
+      return;
+    }
+    el.innerHTML=hist.slice().reverse().map(e=>{
+      const pnl=e.pnlPercent>=0?'+'+e.pnlPercent.toFixed(2)+'%':' '+e.pnlPercent.toFixed(2)+'%';
+      const cls=e.pnlPercent>=0?'pos':'neg';
+      const date=new Date(e.timestamp).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'});
+      return `<div class="history-row" onclick="showEpisodeDetail(${e.episode})">
+        <span class="ep">#${e.episode}</span>
+        <span class="pnl ${cls}">${pnl}</span>
+        <span class="stats">${e.tradesCount} trade · ε${(e.finalEpsilon||1).toFixed(3)} · DD:${e.maxDrawdown.toFixed(1)}%</span>
+        <span class="dd">${date}</span>
+      </div>`;
+    }).join('');
+  } catch(e){}
+}
+
+async function showEpisodeDetail(episode){
+  try {
+    const d=await fetch('/api/episode-history/detail?episode='+episode).then(r=>r.json());
+    const trades=d.trades||[];
+    const msg=`Epizod #${d.episode} | P&L: ${d.pnlPercent>=0?'+':''}${d.pnlPercent.toFixed(2)}% | Trades: ${d.tradesCount} (${d.buyCount}B/${d.sellCount}S) | Max DD: ${d.maxDrawdown.toFixed(1)}% | Epsilon: ${(d.finalEpsilon||1).toFixed(3)}`;
+    log(msg,'system');
+  } catch(e){log('Nie można wczytać detali epizodu','sell')}
 }
 
 function log(msg,type='info'){
@@ -402,6 +447,7 @@ async function update(){
       document.getElementById('winRate').className=m.winRate>50?'metric-value green':'metric-value red';
     }
     updateChart();
+    updateHistory();
   } catch(e){log('API error: '+e.message,'sell')}
 }
 document.getElementById('trainBtn').onclick=async()=>{

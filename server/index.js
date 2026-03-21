@@ -48,6 +48,10 @@ let episodeEpsilons = [];
 let episodeEquity = [];
 let episodeStartBalance = 1000;
 
+// Episode history (completed episodes)
+let episodeHistory = [];
+const MAX_HISTORY = 50;
+
 // Models directory
 const MODELS_DIR = './models';
 if (!fs.existsSync(MODELS_DIR)) fs.mkdirSync(MODELS_DIR, { recursive: true });
@@ -376,6 +380,40 @@ const server = http.createServer(async (req, res) => {
         }));
         return;
     }
+
+    // Episode history (completed episodes summary)
+    if (url === '/api/episode-history') {
+        // Return without full trades array to keep response small
+        const summary = episodeHistory.map(e => ({
+            episode: e.episode,
+            steps: e.steps,
+            startEquity: e.startEquity,
+            endEquity: e.endEquity,
+            pnlPercent: e.pnlPercent,
+            tradesCount: e.tradesCount,
+            buyCount: e.buyCount,
+            sellCount: e.sellCount,
+            maxDrawdown: e.maxDrawdown,
+            finalEpsilon: e.finalEpsilon,
+            timestamp: e.timestamp
+        }));
+        res.end(JSON.stringify(summary));
+        return;
+    }
+
+    if (url === '/api/episode-history/detail') {
+        const urlParts = url.split('?');
+        const params = new URLSearchParams(urlParts[1]);
+        const ep = parseInt(params.get('episode'));
+        const entry = episodeHistory.find(e => e.episode === ep);
+        if (entry) {
+            res.end(JSON.stringify(entry));
+        } else {
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: 'Episode not found' }));
+        }
+        return;
+    }
     
     // Paper Trading endpoints
     if (url === '/api/paper-trading') {
@@ -530,8 +568,33 @@ async function trainingStep() {
     currentEpisodeSteps.push({ step: metrics.steps, price: prices.btc, time: Date.now() });
     episodeEpsilons.push({ step: metrics.steps, epsilon: agent.epsilon });
     
-    // Episode end (every 100 steps)
+    // Episode end (every 100 steps) — save to history before reset
     if (done || (metrics.steps > 0 && metrics.steps % 100 === 0)) {
+        // Save episode summary to history
+        const endEquity = env.capital;
+        const startEquity = episodeStartBalance;
+        const pnlPercent = ((endEquity - startEquity) / startEquity) * 100;
+        const completedTrades = [...episodeTrades];
+        const maxDrawdown = episodeEquity.length > 0
+            ? Math.max(...episodeEquity.map(e => e.drawdown))
+            : 0;
+
+        episodeHistory.push({
+            episode: agent.episode,
+            steps: metrics.steps,
+            startEquity,
+            endEquity,
+            pnlPercent,
+            tradesCount: completedTrades.length,
+            buyCount: completedTrades.filter(t => t.action === 'BUY').length,
+            sellCount: completedTrades.filter(t => t.action === 'SELL').length,
+            maxDrawdown,
+            finalEpsilon: agent.epsilon,
+            timestamp: Date.now(),
+            trades: completedTrades
+        });
+        if (episodeHistory.length > MAX_HISTORY) episodeHistory.shift();
+
         agent.startEpisode();
         await saveModel();
         episodeTrades = [];

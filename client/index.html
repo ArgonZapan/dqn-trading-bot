@@ -73,57 +73,158 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .card{animation:fadeIn .3s ease}
 /* Mobile Responsive - Enhanced */
-@media(max-width:900px){
-  .grid{grid-template-columns:1fr}
-  .prices{grid-template-columns:1fr}
-  .header{padding:16px 20px}
-  .header h1{font-size:1.1rem}
-  .main{padding:16px}
-  .card{margin-top:12px}
-  .card-header{padding:12px 16px;font-size:.65rem}
+/* ========== RESPONSIVE BREAKPOINTS ========== */
+/* Mobile: < 768px | Tablet: 768px-1024px | Desktop: > 1024px */
+
+/* TABLET - 768px to 1024px */
+@media(max-width:1024px){
+  .grid{grid-template-columns:1fr 280px}
+  .header{padding:20px 24px}
+  .header h1{font-size:1.2rem}
+  .main{padding:20px}
+  .prices{grid-template-columns:repeat(3,1fr);gap:12px}
+  .price-card{padding:16px}
   .card-body{padding:16px}
   .metrics-grid{grid-template-columns:1fr 1fr}
-  .big-num{font-size:1.4rem}
-  .price-value{font-size:1.2rem}
-  #episodeChart{height:180px!important}
-  .logs{height:100px}
-  .btn{padding:14px 20px;font-size:.8rem}
-  .modal-content{width:95%;max-height:90vh}
-  .modal-stats{grid-template-columns:1fr 1fr}
-}
-@media(max-width:600px){
-  .header{flex-direction:column;gap:12px;align-items:flex-start}
-  .header>div:last-child{align-self:flex-end;margin-top:-28px}
-  .prices{grid-template-columns:1fr;gap:10px}
-  .price-card{padding:16px}
-  .grid{gap:12px}
-  .card-body{padding:14px}
-  .metrics-grid{grid-template-columns:1fr}
-  .metric-box{padding:12px}
-  #episodeChart{height:160px!important}
-  .chart-placeholder{height:160px}
-  .modal-stats{grid-template-columns:1fr 1fr;gap:8px}
-  .modal-stat{padding:10px}
-  .modal-stat .value{font-size:.95rem}
-  .history-row{flex-wrap:wrap;gap:4px}
-  .history-row .stats{width:100%;order:3;font-size:.6rem}
-  /* Paper trading compact on mobile */
+  #episodeChart,#lastEpisodeChart{height:200px!important}
   .paper-grid{grid-template-columns:1fr 1fr!important}
-  /* Training controls */
-  #trainBtn,#saveBtn{font-size:.7rem;padding:12px}
-  /* Bottom padding for mobile nav */
-  body{padding-bottom:60px}
+  .paper-stats-grid{grid-template-columns:1fr 1fr}
+  .modal-stats{grid-template-columns:repeat(3,1fr)}
 }
-@media(max-width:400px){
-  .header h1{font-size:.95rem}
-  .card-header{font-size:.6rem;padding:10px 12px}
-  .price-label{font-size:.6rem}
-  .price-value{font-size:1rem}
-  .metric-label{font-size:.55rem}
+
+/* MOBILE - < 768px - Primary breakpoint */
+@media(max-width:768px){
+  .grid{display:flex;flex-direction:column;gap:0;padding-bottom:70px}
+  .grid>div:last-child{order:-1;margin-bottom:0}
+  .prices{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .price-card{padding:14px;min-height:80px;display:flex;flex-direction:column;justify-content:center}
+  .price-label{font-size:.6rem;margin-bottom:4px}
+  .price-value{font-size:1.1rem}
+  .price-change{font-size:.7rem;margin-top:4px}
+  .header{padding:14px 16px;flex-wrap:wrap;gap:10px}
+  .header h1{font-size:1rem}
+  .header h1 span{display:none}
+  .header>div:last-child{align-self:center;margin-top:0}
+  .main{padding:12px}
+  .card{border-radius:12px;margin-top:12px}
+  .card-header{padding:10px 14px;font-size:.65rem}
+  .card-body{padding:14px}
+  .metrics-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .metric-box{padding:12px}
+  .metric-label{font-size:.6rem}
   .metric-value{font-size:1rem}
-  .big-num{font-size:1.2rem}
+  .big-num{font-size:1.3rem}
+  #episodeChart,#lastEpisodeChart{height:180px!important}
+  .chart-placeholder{height:160px}
+  .logs{height:90px;font-size:.65rem}
+  .btn{min-height:44px;padding:12px 16px;font-size:.8rem;border-radius:10px}
+  .modal-content{width:97%;max-height:88vh;border-radius:16px}
+  .modal-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .modal-stat{padding:12px}
+  .modal-stat .value{font-size:1rem}
+  /* Sidebar cards - stack on mobile */
+  .sidebar-cards{display:flex;flex-direction:column;gap:12px}
+  .sidebar-cards .card{margin-top:0}
+  /* Paper trading mobile */
+  .paper-grid{grid-template-columns:1fr!important;gap:8px}
+  .paper-stats-grid{grid-template-columns:1fr 1fr}
+  .paper-toggle-row{flex-direction:column;align-items:flex-start!important;gap:8px}
+  .paper-toggle-row>div{width:100%}
+  #paperStrategy,#paperSL,#paperTP{font-size:.75rem;padding:10px}
+  /* Agent metrics */
+  #trainingTimer{font-size:1.8rem}
+  /* History rows */
+  .history-row{flex-wrap:wrap;gap:4px;padding:10px 12px}
+  .history-row .stats{width:100%;order:3;margin-top:4px}
+  /* Bottom Navigation */
+  .bottom-nav{display:flex!important}
+}
+
+/* ========== TOUCH-FRIENDLY IMPROVEMENTS ========== */
+button, .btn, input, select, .switch, .slider, .history-row, .modal-close {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, .bottom-nav-item, .history-row, .card-header {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.main, .logs, .modal-body, #paperHistorySection {
+  -webkit-overflow-scrolling: touch;
+  overflow-y: auto;
+}
+
+.bottom-nav-item:focus, .btn:focus {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+canvas {
+  max-width: 100%;
+  height: auto !important;
+}
+
+.modal-close {
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.switch {
+  min-width: 44px;
+  min-height: 24px;
+}
+
+.switch input:checked + .slider {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+input[type="number"], input[type="text"], select {
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+/* SMALL MOBILE - < 480px */
+@media(max-width:480px){
+  .prices{grid-template-columns:1fr 1fr;gap:8px}
+  .price-card{min-height:70px;padding:12px}
+  .price-label{font-size:.55rem}
+  .price-value{font-size:1rem;font-weight:600}
+  .card{border-radius:10px;margin-top:10px}
+  .card-header{padding:8px 12px;font-size:.6rem}
+  .card-body{padding:12px}
+  .metrics-grid{grid-template-columns:1fr;gap:8px}
+  .metric-box{padding:10px}
+  #episodeChart,#lastEpisodeChart{height:160px!important}
+  .chart-placeholder{height:150px;font-size:.7rem}
+  .btn{min-height:44px;padding:10px 14px;font-size:.75rem}
+  .logs{height:80px;font-size:.6rem}
+  .log-entry{padding:4px 8px}
   #trainingTimer{font-size:1.5rem}
-  .btn{font-size:.7rem;padding:10px 12px}
+  /* Paper trading very small */
+  .paper-stats-grid{grid-template-columns:1fr 1fr;gap:6px}
+  /* Modal adjustments */
+  .modal-header{padding:14px 16px}
+  .modal-body{padding:16px}
+  .modal-stats{grid-template-columns:1fr 1fr;gap:6px}
+  .modal-trade{grid-template-columns:28px 1fr 60px 60px;padding:8px 12px;font-size:.7rem}
+}
+
+/* EXTRA SMALL - < 360px */
+@media(max-width:360px){
+  .header h1{font-size:.9rem}
+  .prices{grid-template-columns:1fr;gap:6px}
+  .price-card{min-height:60px}
+  .metric-value{font-size:.9rem}
+  .btn{font-size:.7rem;padding:8px 12px}
+  #trainingTimer{font-size:1.3rem}
 }
 /* Episode Detail Modal */
 #episodeModal{display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(4px)}
@@ -1135,5 +1236,88 @@ update();
     </div>
   </div>
 </div>
+
+<!-- Sticky Bottom Navigation - Mobile -->
+<nav class="bottom-nav" id="bottomNav">
+  <button class="bottom-nav-item active" data-section="dashboard" onclick="switchSection('dashboard')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+    <span>Dashboard</span>
+  </button>
+  <button class="bottom-nav-item" data-section="chart" onclick="switchSection('chart')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    <span>Wykres</span>
+  </button>
+  <button class="bottom-nav-item" data-section="trading" onclick="switchSection('trading')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M16 8l-4 4-4-4"/><path d="M12 16V8"/></svg>
+    <span>Trading</span>
+  </button>
+  <button class="bottom-nav-item" data-section="history" onclick="switchSection('history')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    <span>Historia</span>
+  </button>
+</nav>
+
+<script>
+// Mobile navigation section switching
+function switchSection(section) {
+  // Update active state
+  document.querySelectorAll('.bottom-nav-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.section === section);
+  });
+  
+  // Scroll to section on mobile
+  if (window.innerWidth < 768) {
+    const grid = document.querySelector('.grid');
+    const cards = grid.querySelectorAll('.card');
+    
+    if (section === 'dashboard') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (section === 'chart') {
+      // Scroll to first chart card
+      cards[1]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (section === 'trading') {
+      // Scroll to trading/control section (last child of grid)
+      const lastChild = grid.lastElementChild;
+      if (lastChild) lastChild.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (section === 'history') {
+      // Scroll to history card
+      cards[3]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+}
+
+// Update nav active state on scroll
+let scrollTimeout;
+window.addEventListener('scroll', () => {
+  clearTimeout(scrollTimeout);
+  scrollTimeout = setTimeout(() => {
+    if (window.innerWidth >= 768) return;
+    
+    const scrollPos = window.scrollY + 200;
+    const cards = document.querySelectorAll('.grid .card');
+    
+    cards.forEach((card, index) => {
+      const top = card.offsetTop;
+      const bottom = top + card.offsetHeight;
+      
+      if (scrollPos >= top && scrollPos < bottom) {
+        let section = 'dashboard';
+        if (index === 1) section = 'chart';
+        else if (index === 3) section = 'history';
+        else if (index === 0) section = 'dashboard';
+        
+        document.querySelectorAll('.bottom-nav-item').forEach(item => {
+          item.classList.toggle('active', 
+            (item.dataset.section === 'dashboard' && index <= 1) ||
+            (item.dataset.section === 'chart' && index === 1) ||
+            (item.dataset.section === 'history' && index >= 3) ||
+            (item.dataset.section === 'trading' && index >= 4)
+          );
+        });
+      }
+    });
+  }, 50);
+});
+</script>
 </body>
 </html>

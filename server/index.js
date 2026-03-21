@@ -1398,7 +1398,8 @@ async function trainingStep() {
             timestamp: Date.now(),
             trades: completedTrades,
             prices: [...currentEpisodeSteps],
-            equity: [...episodeEquity]
+            equity: [...episodeEquity],
+            epsilons: [...episodeEpsilons]
         });
         if (episodeHistory.length > MAX_HISTORY) episodeHistory.shift();
 

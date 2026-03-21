@@ -382,10 +382,17 @@ input[type="number"], input[type="text"], select {
 <div style="position:relative;height:200px">
 <canvas id="lastEpisodeChart"></canvas>
 </div>
-<div style="display:flex;gap:16px;margin-top:12px;font-size:.7rem;margin-bottom:8px">
+<div style="display:flex;gap:16px;margin-top:12px;font-size:.7rem;margin-bottom:4px">
 <span style="color:var(--green)">● BUY</span>
 <span style="color:var(--red)">● SELL</span>
 <span id="lastEquityLegend" style="color:var(--purple);display:none">● Equity %</span>
+</div>
+<div style="position:relative;height:60px;margin-top:6px">
+<canvas id="lastEpisodeEpsilonChart"></canvas>
+</div>
+<div style="display:flex;align-items:center;gap:8px;font-size:.65rem;color:var(--text2);margin-bottom:8px">
+<span style="color:var(--blue)">● Epsilon</span>
+<span id="lastEpsValue" style="color:var(--blue);font-weight:600"></span>
 </div>
 <div id="lastEpisodeStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:.7rem"></div>
 </div>
@@ -644,6 +651,12 @@ No active position
 </div>
 <button class="btn" id="liveResetBtn" onclick="liveReset()" style="font-size:.7rem;padding:8px 12px;margin-top:8px;background:linear-gradient(135deg,var(--orange),#b35900)">🔄 RESET ACCOUNT</button>
 <div id="liveStatus" style="margin-top:8px;font-size:.65rem;color:var(--text2)">Status: Stopped</div>
+<div id="liveEquityChartSection" style="margin-top:12px;display:none">
+<div style="font-size:.65rem;color:var(--text2);margin-bottom:6px;text-transform:uppercase">Equity Curve</div>
+<div style="position:relative;height:80px">
+<canvas id="liveEquityChart"></canvas>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -686,6 +699,7 @@ input:checked+.slider:before{transform:translateX(20px);background:#fff}
 let trading=false;
 let chart=null;
 let lastEpisodeChart=null;
+let lastEpisodeEpsilonChart=null;
 let chartData={prices:[],trades:[],epsilons:[],equity:[]};
 let lastEpisodeData=null;
 let episodeStartEquity=1000;
@@ -884,6 +898,44 @@ function initLastEpisodeChart(){
   });
 }
 
+function initLastEpisodeEpsilonChart(){
+  const ctx=document.getElementById('lastEpisodeEpsilonChart').getContext('2d');
+  lastEpisodeEpsilonChart=new Chart(ctx,{
+    type:'line',
+    data:{
+      labels:[],
+      datasets:[{
+        label:'Epsilon',
+        data:[],
+        borderColor:'#58a6ff',
+        backgroundColor:'rgba(88,166,255,.15)',
+        fill:true,
+        tension:.3,
+        pointRadius:0,
+        borderWidth:1.5,
+        yAxisID:'y'
+      }]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{
+        x:{display:false,grid:{display:false}},
+        y:{
+          type:'linear',
+          display:true,
+          position:'left',
+          min:0,
+          max:1,
+          grid:{color:'rgba(48,54,61,.4)'},
+          ticks:{color:'#8b949e',font:{size:9},stepSize:0.25}
+        }
+      }
+    }
+  });
+}
+
 async function updateChart(){
   try {
     const d=await fetch('/api/episode-data').then(r=>r.json());
@@ -931,6 +983,7 @@ async function updateLastEpisode(){
     const trades=detail.trades||[];
     const prices=detail.prices||[];
     const equity=detail.equity||[];
+    const epsilons=detail.epsilons||[];
     const buyData=trades.filter(t=>t.action==='BUY').map(t=>({x:t.step,y:t.price}));
     const sellData=trades.filter(t=>t.action==='SELL').map(t=>({x:t.step,y:t.price}));
     // Use real prices if available, else step index for labels
@@ -951,6 +1004,16 @@ async function updateLastEpisode(){
       lastEpisodeChart.options.scales.y2.display=false;
     }
     lastEpisodeChart.update('none');
+    // Epsilon sub-chart
+    if(!lastEpisodeEpsilonChart)initLastEpisodeEpsilonChart();
+    if(epsilons.length>0){
+      const epsData=epsilons.map(e=>({x:e.step,y:e.epsilon}));
+      lastEpisodeEpsilonChart.data.labels=epsData.map(d=>d.x);
+      lastEpisodeEpsilonChart.data.datasets[0].data=epsData;
+      const lastEps=epsData[epsData.length-1].y;
+      document.getElementById('lastEpsValue').textContent='ε='+lastEps.toFixed(4);
+      lastEpisodeEpsilonChart.update('none');
+    }
     // Stats bar
     const pnl=detail.pnlPercent||0;
     const pnlStr=pnl>=0?'+'+pnl.toFixed(2)+'%':' '+pnl.toFixed(2)+'%';
@@ -1220,6 +1283,8 @@ async function clearPaperHistory(){
 // Paper equity chart
 let paperEquityChart = null;
 let paperEquityVisible = false;
+let liveEquityChart = null;
+let liveEquityData = [];
 
 async function initPaperEquityChart() {
   if (paperEquityChart) return;
@@ -1414,6 +1479,15 @@ async function updateLiveTrading() {
     if (status.takeProfitPct) document.getElementById('liveTP').value = status.takeProfitPct;
     if (status.positionSize) document.getElementById('livePositionSize').value = Math.round((status.positionSize || 0.95) * 100);
     
+    // Update live equity chart
+    if (status.enabled && liveActive) {
+      const eqSection = document.getElementById('liveEquityChartSection');
+      if (eqSection) eqSection.style.display = 'block';
+      liveEquityData.push({ time: Date.now(), equity: status.equity || 0 });
+      if (liveEquityData.length > 200) liveEquityData.shift();
+      await updateLiveEquityChart();
+    }
+    
   } catch(e) { console.error('updateLiveTrading:', e); }
 }
 
@@ -1475,8 +1549,55 @@ async function liveReset() {
   try {
     await fetch('/api/live-trading/reset', { method: 'POST' }).then(x => x.json());
     log('Live Trading RESET', 'system');
+    liveEquityData = [];
     await updateLiveTrading();
   } catch(e) {}
+}
+
+async function initLiveEquityChart() {
+  if (liveEquityChart) return;
+  const ctx = document.getElementById('liveEquityChart').getContext('2d');
+  liveEquityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Equity',
+        data: [],
+        borderColor: '#3fb950',
+        backgroundColor: 'rgba(63,185,80,0.15)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        borderWidth: 2,
+        yAxisID: 'y'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { display: false, grid: { display: false } },
+        y: {
+          type: 'linear',
+          display: true,
+          position: 'left',
+          grid: { color: 'rgba(48,54,61,.5)' },
+          ticks: { color: '#3fb950', font: { size: 9 }, callback: v => '$' + v.toFixed(0) }
+        }
+      }
+    }
+  });
+}
+
+async function updateLiveEquityChart() {
+  if (!liveEquityChart) await initLiveEquityChart();
+  const labels = liveEquityData.map(d => new Date(d.time).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  liveEquityChart.data.labels = labels;
+  liveEquityChart.data.datasets[0].data = liveEquityData.map(d => d.equity);
+  liveEquityChart.update('none');
 }
 
 document.getElementById('liveToggle')?.addEventListener('change', async function() {

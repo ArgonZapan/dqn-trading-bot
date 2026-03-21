@@ -360,8 +360,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 </div>
 <div style="display:flex;gap:8px;margin-top:12px">
 <button class="btn" id="paperReset" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,var(--orange),#b35900)">🔄 RESET</button>
+<button class="btn" id="paperHistoryBtn" onclick="togglePaperHistory()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#6366f1,#4f46e5)">📜 HISTORY</button>
+<button class="btn" id="paperClearHistory" onclick="clearPaperHistory()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#ef4444,#dc2626)">🗑️</button>
 </div>
 <div id="paperStatus" style="margin-top:8px;font-size:.65rem;color:var(--text2)">Status: Stopped</div>
+<div id="paperHistorySection" style="display:none;margin-top:12px;max-height:200px;overflow-y:auto">
+<div id="paperHistoryList" style="font-size:.65rem"></div>
+</div>
 </div>
 </div>
 <style>
@@ -723,8 +728,54 @@ async function updatePaper(){
     if(d.takeProfit)document.getElementById('paperTP').value=d.takeProfit;
   } catch(e){}
 }
+
+let paperHistoryVisible=false;
+async function togglePaperHistory(){
+  paperHistoryVisible=!paperHistoryVisible;
+  const section=document.getElementById('paperHistorySection');
+  section.style.display=paperHistoryVisible?'block':'none';
+  if(paperHistoryVisible){
+    await loadPaperHistory();
+  }
+}
+async function loadPaperHistory(){
+  try {
+    const r=await fetch('/api/paper-trading/history').then(x=>x.json());
+    const list=document.getElementById('paperHistoryList');
+    if(!r.trades||r.trades.length===0){
+      list.innerHTML='<div style="color:var(--text2);padding:8px">No trades yet</div>';
+      return;
+    }
+    let html='<table style="width:100%;border-collapse:collapse"><tr style="border-bottom:1px solid var(--border)"><td style="padding:4px;font-weight:600">Side</td><td style="padding:4px">Entry</td><td style="padding:4px">Exit</td><td style="padding:4px">P&L</td><td style="padding:4px">Reason</td></tr>';
+    r.trades.slice().reverse().forEach(t=>{
+      const pnlClass=t.pnl>=0?'color:#22c55e':'color:#ef4444';
+      const sideClass=t.side==='LONG'?'color:#22c55e':'color:#f97316';
+      const dur=Math.floor(t.duration/1000)+'s';
+      html+=`<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:4px;font-weight:600;${sideClass}">${t.side}</td>
+        <td style="padding:4px">$${t.entryPrice.toFixed(2)}</td>
+        <td style="padding:4px">$${t.exitPrice.toFixed(2)}</td>
+        <td style="padding:4px;${pnlClass}">${t.pnl>=0?'+':''}${t.pnl.toFixed(2)}</td>
+        <td style="padding:4px;color:var(--text2)">${t.exitReason}</td>
+      </tr>`;
+    });
+    html+='</table>';
+    list.innerHTML=html;
+  } catch(e){document.getElementById('paperHistoryList').innerHTML='Error loading history';}
+}
+async function clearPaperHistory(){
+  if(!confirm('Clear trade history?'))return;
+  await fetch('/api/paper-trading/clear-history').then(x=>x.json());
+  await loadPaperHistory();
+  log('Paper history cleared','system');
+}
+
+// Update paper history periodically when visible
+setInterval(()=>{if(paperHistoryVisible)loadPaperHistory();},5000);
+
+// Paper update interval
+setInterval(updatePaper,3000);
 setInterval(update,2000);
-setInterval(updatePaper,2000);
 update();
 updatePaper();
 

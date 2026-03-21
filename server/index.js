@@ -174,20 +174,21 @@ function calcMACD(prices, fast = 12, slow = 26, signal = 9) {
     return { value: macdLine, signal: macdLine * 0.9, histogram: macdLine * 0.1 };
 }
 
-// Paper trading signal
+// Paper trading signal - returns 'BUY', 'SELL' (close long/short), or 'HOLD'
 function paperSignal(candles, ind) {
     const last = candles[candles.length - 1];
     if (!last || !ind.ema9) return 'HOLD';
     
     if (paperStrategy === 'trend') {
+        // BUY = uptrend confirmation, SHORT = downtrend confirmation
         if (ind.ema9 > ind.ema21 && last.close > ind.ema9) return 'BUY';
-        if (ind.ema9 < ind.ema21 && last.close < ind.ema9) return 'SELL';
+        if (ind.ema9 < ind.ema21 && last.close < ind.ema9) return 'SHORT';
     } else if (paperStrategy === 'momentum') {
-        if (ind.rsi < 35) return 'BUY';
-        if (ind.rsi > 65) return 'SELL';
+        if (ind.rsi < 30) return 'BUY';
+        if (ind.rsi > 70) return 'SHORT';
     } else if (paperStrategy === 'macd') {
-        if (ind.macd.histogram > 0) return 'BUY';
-        if (ind.macd.histogram < 0) return 'SELL';
+        if (ind.macd.histogram > 0.5) return 'BUY';
+        if (ind.macd.histogram < -0.5) return 'SHORT';
     }
     return 'HOLD';
 }
@@ -315,6 +316,7 @@ async function paperTradingStep() {
 
     // Execute trades (only if not SL/TP triggered)
     if (signal === 'BUY' && !paperOpenPosition) {
+        // OPEN LONG
         const qty = (paperTrading.capital * paperPositionSize) / currentPrice;
         const fee = currentPrice * qty * 0.001;
         const sl = currentPrice * (1 - paperTrading.stopLoss / 100);
@@ -334,31 +336,72 @@ async function paperTradingStep() {
         paperTrading.positions = [paperOpenPosition];
         paperTrading.capital -= qty * currentPrice + fee;
         paperLastTradeTime = now;
-        console.log(`📈 PAPER BUY: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
+        console.log(`📈 PAPER LONG: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
+    } else if (signal === 'SHORT' && !paperOpenPosition) {
+        // OPEN SHORT - borrow and sell, profit from price drop
+        const qty = (paperTrading.capital * paperPositionSize) / currentPrice;
+        const fee = currentPrice * qty * 0.001;
+        const sl = currentPrice * (1 + paperTrading.stopLoss / 100); // SL above entry for SHORT
+        const tp = currentPrice * (1 - paperTrading.takeProfit / 100); // TP below entry for SHORT
+        paperOpenPosition = {
+            id: `paper_${now}`,
+            side: 'SHORT',
+            entryPrice: currentPrice,
+            quantity: qty,
+            fee,
+            pnl: 0,
+            pnlPct: 0,
+            entryTime: now,
+            stopLoss: sl,
+            takeProfit: tp
+        };
+        paperTrading.positions = [paperOpenPosition];
+        paperTrading.capital += qty * currentPrice - fee; // Receive USDT from short sale
+        paperLastTradeTime = now;
+        console.log(`📉 PAPER SHORT: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
     } else if ((signal === 'SELL' || slTpTriggered) && paperOpenPosition) {
-        const pnl = (currentPrice - paperOpenPosition.entryPrice) * paperOpenPosition.quantity;
-        const exitFee = currentPrice * paperOpenPosition.quantity * 0.001;
+        // CLOSE position (不管是 LONG 还是 SHORT)
+        let pnl, exitValue;
+        if (paperOpenPosition.side === 'LONG') {
+            pnl = (currentPrice - paperOpenPosition.entryPrice) * paperOpenPosition.quantity;
+            exitValue = paperOpenPosition.quantity * currentPrice;
+        } else {
+            // SHORT: profit when price goes DOWN
+            pnl = (paperOpenPosition.entryPrice - currentPrice) * paperOpenPosition.quantity;
+            exitValue = paperOpenPosition.quantity * currentPrice;
+        }
+        const exitFee = exitValue * 0.001;
         const netPnl = pnl - paperOpenPosition.fee - exitFee;
 
         const closed = {
             id: paperOpenPosition.id,
-            side: 'BUY',
-            price: currentPrice,
+            side: paperOpenPosition.side,
+            entryPrice: paperOpenPosition.entryPrice,
+            exitPrice: currentPrice,
             quantity: paperOpenPosition.quantity,
-            fee: exitFee,
+            fee: paperOpenPosition.fee + exitFee,
             pnl: netPnl,
+            pnlPct: ((currentPrice - paperOpenPosition.entryPrice) / paperOpenPosition.entryPrice) * 100 * (paperOpenPosition.side === 'SHORT' ? -1 : 1),
             timestamp: now,
+            entryTime: paperOpenPosition.entryTime,
             exitReason: slTpTriggered ? slTpReason : 'SIGNAL'
         };
         paperTrading.closedTrades.push(closed);
-        paperTrading.capital += paperOpenPosition.quantity * currentPrice - exitFee;
+        
+        // Return capital + P&L
+        if (paperOpenPosition.side === 'LONG') {
+            paperTrading.capital += exitValue - exitFee;
+        } else {
+            paperTrading.capital -= exitValue + exitFee; // Cover the borrowed asset
+            paperTrading.capital += pnl - paperOpenPosition.fee - exitFee;
+        }
         paperOpenPosition = null;
         paperTrading.positions = [];
         paperLastTradeTime = now;
         if (slTpTriggered) {
-            console.log(`⚡ PAPER ${slTpReason}: P&L $${netPnl.toFixed(2)} @ $${currentPrice.toLocaleString()}`);
+            console.log(`⚡ PAPER ${closed.side} ${slTpReason}: P&L $${netPnl.toFixed(2)} @ $${currentPrice.toLocaleString()}`);
         } else {
-            console.log(`📉 PAPER SELL: P&L $${netPnl.toFixed(2)}`);
+            console.log(`📕 PAPER CLOSE ${closed.side}: P&L $${netPnl.toFixed(2)} @ $${currentPrice.toLocaleString()}`);
         }
         updatePaperStats();
     }
@@ -533,6 +576,33 @@ const server = http.createServer(async (req, res) => {
         } else {
             res.end(JSON.stringify({ strategy: paperStrategy }));
         }
+        return;
+    }
+    
+    if (url === '/api/paper-trading/history') {
+        // Return recent closed trades (last 50)
+        const history = paperTrading.closedTrades.slice(-50).map(t => ({
+            id: t.id,
+            side: t.side,
+            entryPrice: t.entryPrice,
+            exitPrice: t.exitPrice,
+            quantity: t.quantity,
+            pnl: t.pnl,
+            pnlPct: t.pnlPct,
+            fee: t.fee,
+            entryTime: t.entryTime,
+            exitTime: t.timestamp,
+            exitReason: t.exitReason,
+            duration: t.timestamp - t.entryTime
+        }));
+        res.end(JSON.stringify({ trades: history, total: history.length }));
+        return;
+    }
+    
+    if (url === '/api/paper-trading/clear-history') {
+        paperTrading.closedTrades = [];
+        updatePaperStats();
+        res.end(JSON.stringify({ success: true }));
         return;
     }
     

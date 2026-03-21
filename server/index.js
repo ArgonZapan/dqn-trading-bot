@@ -367,19 +367,18 @@ function updatePaperStats() {
     const avgLoss = losing.length > 0 ? losing.reduce((s, t) => s + t.pnl, 0) / losing.length : 0;
     const profitFactor = totalPnl > 0 && avgLoss !== 0 ? Math.abs(avgWin / avgLoss) : totalPnl > 0 ? Infinity : 0;
 
-    // Max drawdown
-    let peak = paperTrading.capital;
+    // Max drawdown tracking - compute from closed trades cumulatively (don't mutate capital)
+    let peak = 1000; // Start from initial capital
     let maxDD = 0;
     let maxDDPct = 0;
+    let runningCapital = 1000;
     for (const t of closed) {
-        paperTrading.capital += t.pnl;
-        if (paperTrading.capital > peak) peak = paperTrading.capital;
-        const dd = peak - paperTrading.capital;
+        runningCapital += t.pnl;
+        if (runningCapital > peak) peak = runningCapital;
+        const dd = peak - runningCapital;
         const ddPct = peak > 0 ? (dd / peak) * 100 : 0;
         if (dd > maxDD) { maxDD = dd; maxDDPct = ddPct; }
     }
-    // Reset capital to current balance
-    paperTrading.capital = paperPositionsValue() + paperFreeCapital();
 
     paperTrading.stats = {
         totalTrades: closed.length,
@@ -935,8 +934,8 @@ async function trainingStep() {
         });
     }
     
-    // Calculate equity
-    const currentBalance = env.capital;
+    // Calculate equity (total portfolio value including BTC holdings)
+    const currentBalance = env.balance();
     episodeEquity.push({
         step: metrics.steps,
         equity: currentBalance,
@@ -956,8 +955,11 @@ async function trainingStep() {
     
     // Episode end (every 100 steps) — save to history before reset
     if (done || (metrics.steps > 0 && metrics.steps % 100 === 0)) {
+        // Capture episode number BEFORE starting next episode (startEpisode increments)
+        const completedEpisode = agent.episode;
+
         // Save episode summary to history
-        const endEquity = env.capital;
+        const endEquity = env.balance();
         const startEquity = episodeStartBalance;
         const pnlPercent = ((endEquity - startEquity) / startEquity) * 100;
         const completedTrades = [...episodeTrades];
@@ -966,7 +968,7 @@ async function trainingStep() {
             : 0;
 
         episodeHistory.push({
-            episode: agent.episode,
+            episode: completedEpisode,
             steps: metrics.steps,
             startEquity,
             endEquity,
@@ -982,15 +984,20 @@ async function trainingStep() {
         if (episodeHistory.length > MAX_HISTORY) episodeHistory.shift();
 
         // Send training update alert
-        checkEpisodeAlerts(agent.episode, endEquity, pnlPercent, completedTrades.length);
+        checkEpisodeAlerts(completedEpisode, endEquity, pnlPercent, completedTrades.length);
 
-        agent.startEpisode();
-        await saveModel();
+        // Reset episode tracking state BEFORE starting new episode
         episodeTrades = [];
         currentEpisodeSteps = [];
         episodeEpsilons = [];
         episodeEquity = [];
-        episodeStartBalance = env.capital;
+        episodeStartBalance = env.balance();
+
+        // Start new episode (increments agent.episode)
+        agent.startEpisode();
+        metrics.steps = 0; // Reset step counter for new episode
+
+        await saveModel();
     }
     
     metrics.bufferSize = agent.buffer.length;

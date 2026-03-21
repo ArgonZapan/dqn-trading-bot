@@ -56,7 +56,7 @@ class Portfolio {
     }
 
     pnlPercent(currentPrices) {
-        return (this.pnl(currentPrices) / this.initial * 100;
+        return (this.pnl(currentPrices) / this.initial) * 100;
     }
 
     winRate() {

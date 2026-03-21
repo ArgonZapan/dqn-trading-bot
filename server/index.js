@@ -18,6 +18,9 @@ let trainingActive = false;
 let metrics = { epsilon: 1.0, episode: 0, bufferSize: 0, loss: 0, steps: 0, isTraining: false };
 let lastModelSave = 0;
 
+// Model persistence config
+const MODEL_SAVE_INTERVAL_MS = parseInt(process.env.MODEL_SAVE_INTERVAL_MS || '600000'); // 10 min default
+
 // Episode tracking for chart
 let episodeTrades = [];
 let currentEpisodeSteps = [];
@@ -58,7 +61,7 @@ async function loadLastModel() {
 // Save model
 async function saveModel() {
     const now = Date.now();
-    if (now - lastModelSave < 10 * 60 * 1000) return; // Max every 10 min
+    if (now - lastModelSave < MODEL_SAVE_INTERVAL_MS) return; // Respect interval
     lastModelSave = now;
     
     const filename = `dqn-ep${agent.episode}.json`;
@@ -247,6 +250,17 @@ updatePrices();
 
 // Load last model on start
 loadLastModel();
+
+// Auto-save model every MODEL_SAVE_INTERVAL_MS (10 min default)
+setInterval(async () => {
+    if (agent.episode > 0) {
+        const now = Date.now();
+        if (now - lastModelSave >= MODEL_SAVE_INTERVAL_MS) {
+            await saveModel();
+            console.log(`⏰ Auto-save triggered at episode ${agent.episode}`);
+        }
+    }
+}, MODEL_SAVE_INTERVAL_MS);
 
 server.listen(PORT, HOST, () => {
     const nets = require('os').networkInterfaces();

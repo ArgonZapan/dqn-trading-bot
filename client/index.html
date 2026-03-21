@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DQN Trading Bot</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+        .header { background: #161b22; padding: 15px 20px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { color: #58a6ff; font-size: 1.5rem; }
+        .status { display: flex; align-items: center; gap: 10px; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #238636; }
+        .status-dot.off { background: #f85149; }
+        .container { display: grid; grid-template-columns: 1fr 320px; gap: 20px; padding: 20px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 15px; }
+        .card-title { font-size: 0.85rem; color: #8b949e; margin-bottom: 10px; text-transform: uppercase; }
+        .price-display { text-align: center; padding: 30px; }
+        .price-label { font-size: 0.9rem; color: #8b949e; margin-bottom: 5px; }
+        .price-value { font-size: 2.5rem; font-weight: bold; color: #58a6ff; }
+        .chart-container { height: 300px; background: #0d1117; border-radius: 4px; margin-top: 10px; }
+        .sidebar { display: flex; flex-direction: column; gap: 15px; }
+        .metric { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #21262d; }
+        .metric:last-child { border-bottom: none; }
+        .metric-label { color: #8b949e; }
+        .metric-value { font-weight: bold; }
+        .btn { background: #238636; color: #fff; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; width: 100%; font-size: 0.9rem; transition: background 0.2s; }
+        .btn:hover { background: #2ea043; }
+        .btn.stop { background: #da3633; }
+        .btn.stop:hover { background: #f85149; }
+        .logs { height: 120px; overflow-y: auto; background: #0d1117; border-radius: 4px; padding: 10px; font-family: monospace; font-size: 0.75rem; }
+        .log-entry { margin-bottom: 3px; }
+        .log-entry.info { color: #58a6ff; }
+        .log-entry.error { color: #f85149; }
+        .log-entry.success { color: #3fb950; }
+        .pairs { display: flex; gap: 10px; margin-bottom: 10px; }
+        .pair-btn { flex: 1; padding: 10px; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 4px; cursor: pointer; }
+        .pair-btn.active { background: #388bfd33; border-color: #58a6ff; color: #58a6ff; }
+        @media (max-width: 768px) { .container { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 DQN Trading Bot</h1>
+        <div class="status">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">Connecting...</span>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="main">
+            <div class="card">
+                <div class="pairs">
+                    <button class="pair-btn active" id="btcBtn">BTC/USDT</button>
+                    <button class="pair-btn" id="ethBtn">ETH/USDT</button>
+                    <button class="pair-btn" id="solBtn">SOL/USDT</button>
+                </div>
+                <div class="price-display">
+                    <div class="price-label" id="pairLabel">BTC/USDT</div>
+                    <div class="price-value" id="priceValue">--</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="priceChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="card" style="margin-top: 20px;">
+                <div class="card-title">System Logs</div>
+                <div class="logs" id="logs">
+                    <div class="log-entry info">[--:--:--] Connecting to server...</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="sidebar">
+            <div class="card">
+                <div class="card-title">Trading Control</div>
+                <button class="btn" id="startBtn">▶ Start Trading</button>
+            </div>
+            
+            <div class="card">
+                <div class="card-title">Agent Metrics</div>
+                <div class="metric"><span class="metric-label">Epsilon (ε)</span><span class="metric-value" id="epsilon">1.000</span></div>
+                <div class="metric"><span class="metric-label">Episode</span><span class="metric-value" id="episode">0</span></div>
+                <div class="metric"><span class="metric-label">Buffer Size</span><span class="metric-value" id="bufferSize">0</span></div>
+                <div class="metric"><span class="metric-label">Loss</span><span class="metric-value" id="loss">--</span></div>
+            </div>
+            
+            <div class="card">
+                <div class="card-title">Portfolio</div>
+                <div class="metric"><span class="metric-label">Balance</span><span class="metric-value" id="balance">$1000</span></div>
+                <div class="metric"><span class="metric-label">Position</span><span class="metric-value" id="position">FLAT</span></div>
+                <div class="metric"><span class="metric-label">P&L</span><span class="metric-value" id="pnl">0%</span></div>
+            </div>
+            
+            <div class="card">
+                <div class="card-title">Actions</div>
+                <button class="btn" id="retrainBtn">🔄 Retrain Model</button>
+                <button class="btn" id="backtestBtn" style="margin-top: 10px">📊 Run Backtest</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        const socket = io();
+        let priceHistory = [];
+        let lastPrice = null;
+        let currentPair = 'BTCUSDT';
+        
+        const priceEl = document.getElementById('priceValue');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const logsEl = document.getElementById('logs');
+        const startBtn = document.getElementById('startBtn');
+        const epsilonEl = document.getElementById('epsilon');
+        const episodeEl = document.getElementById('episode');
+        const bufferEl = document.getElementById('bufferSize');
+        const lossEl = document.getElementById('loss');
+        
+        const ctx = document.getElementById('priceChart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: 'Price', data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.1)', borderWidth: 2, fill: true, tension: 0.1, pointRadius: 0 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } } }
+        });
+        
+        function addLog(msg, type = 'info') {
+            const t = new Date().toLocaleTimeString();
+            const e = document.createElement('div');
+            e.className = `log-entry ${type}`;
+            e.textContent = `[${t}] ${msg}`;
+            logsEl.appendChild(e);
+            logsEl.scrollTop = logsEl.scrollHeight;
+        }
+        
+        function updatePrice(price) {
+            priceEl.textContent = `$${parseFloat(price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            lastPrice = price;
+            priceHistory.push(price);
+            if (priceHistory.length > 50) priceHistory.shift();
+            chart.data.labels = priceHistory.map((_, i) => i);
+            chart.data.datasets[0].data = priceHistory;
+            chart.update('none');
+        }
+        
+        socket.on('connect', () => { statusDot.classList.remove('off'); statusText.textContent = 'Connected'; addLog('Connected', 'success'); });
+        socket.on('disconnect', () => { statusDot.classList.add('off'); statusText.textContent = 'Disconnected'; addLog('Disconnected', 'error'); });
+        socket.on('btc_price', (d) => { if (d.price) updatePrice(d.price); });
+        socket.on('status', (d) => { if (d.trading) { startBtn.textContent = '⏹ Stop'; startBtn.classList.add('stop'); addLog('Trading started', 'success'); } else { startBtn.textContent = '▶ Start Trading'; startBtn.classList.remove('stop'); } });
+        
+        startBtn.addEventListener('click', () => {
+            if (startBtn.classList.contains('stop')) {
+                fetch('/api/trading/stop', { method: 'POST' });
+            } else {
+                fetch('/api/trading/start', { method: 'POST' });
+            }
+        });
+        
+        document.getElementById('btcBtn').addEventListener('click', () => { currentPair = 'BTCUSDT'; document.getElementById('pairLabel').textContent = 'BTC/USDT'; });
+        document.getElementById('ethBtn').addEventListener('click', () => { currentPair = 'ETHUSDT'; document.getElementById('pairLabel').textContent = 'ETH/USDT'; });
+        document.getElementById('solBtn').addEventListener('click', () => { currentPair = 'SOLUSDT'; document.getElementById('pairLabel').textContent = 'SOL/USDT'; });
+        
+        addLog('Dashboard ready', 'success');
+        fetch('/api/btc/price').then(r => r.json()).then(d => { if (d.price) updatePrice(d.price); }).catch(() => addLog('Failed to fetch price', 'error'));
+    </script>
+</body>
+</html>

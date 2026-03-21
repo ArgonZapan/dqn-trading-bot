@@ -147,6 +147,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .modal-trade.header{background:var(--bg3);color:var(--text2);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px}
 .modal-trade .buy{color:var(--green)}
 .modal-trade .sell{color:var(--red)}
+.paper-badge{display:inline-block;background:linear-gradient(135deg,#f0883e,#b35900);color:#fff;font-size:.5rem;font-weight:700;padding:2px 5px;border-radius:6px;text-transform:uppercase;letter-spacing:.5px;vertical-align:middle;margin-left:4px}
+.transaction-badge{display:inline-block;background:var(--bg3);color:var(--text2);font-size:.55rem;font-weight:600;padding:2px 6px;border-radius:8px;text-transform:uppercase;letter-spacing:.5px;margin-left:6px;border:1px solid var(--border)}
+.transaction-badge.paper{background:linear-gradient(135deg,rgba(240,136,62,.2),rgba(179,89,0,.2));color:#f0883e;border-color:rgba(240,136,62,.4)}
+.transaction-badge.live{background:linear-gradient(135deg,rgba(63,185,80,.2),rgba(46,160,67,.2));color:var(--green);border-color:rgba(63,185,80,.4)}
 .modal-trade .empty{text-align:center;color:var(--text2);padding:20px}
 </style>
 </head>
@@ -157,7 +161,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 </div>
 <div style="display:flex;align-items:center;gap:16px">
 <span class="status-dot"></span>
-<span style="font-size:.8rem;color:var(--text2)">Live</span>
+<span style="font-size:.8rem;color:var(--text2)" id="modeLabel">Live</span>
+<span id="paperModeBadge" style="display:none;background:linear-gradient(135deg,#f0883e,#b35900);color:#fff;font-size:.6rem;font-weight:700;padding:3px 8px;border-radius:10px;text-transform:uppercase;letter-spacing:.5px">📄 PAPER</span>
 </div>
 </div>
 <div class="main">
@@ -361,11 +366,18 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <div style="display:flex;gap:8px;margin-top:12px">
 <button class="btn" id="paperReset" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,var(--orange),#b35900)">🔄 RESET</button>
 <button class="btn" id="paperHistoryBtn" onclick="togglePaperHistory()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#6366f1,#4f46e5)">📜 HISTORY</button>
+<button class="btn" id="paperEquityBtn" onclick="togglePaperEquity()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#a371f7,#8957e5)">📈 EQUITY</button>
 <button class="btn" id="paperClearHistory" onclick="clearPaperHistory()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#ef4444,#dc2626)">🗑️</button>
 </div>
 <div id="paperStatus" style="margin-top:8px;font-size:.65rem;color:var(--text2)">Status: Stopped</div>
 <div id="paperHistorySection" style="display:none;margin-top:12px;max-height:200px;overflow-y:auto">
 <div id="paperHistoryList" style="font-size:.65rem"></div>
+</div>
+<div id="paperEquitySection" style="margin-top:12px;display:none">
+<div style="font-size:.65rem;color:var(--text2);margin-bottom:8px;text-transform:uppercase">Equity Curve</div>
+<div style="position:relative;height:120px">
+<canvas id="paperEquityChart"></canvas>
+</div>
 </div>
 </div>
 </div>
@@ -726,6 +738,20 @@ async function updatePaper(){
     if(d.enabled!==undefined)document.getElementById('paperToggle').checked=d.enabled;
     if(d.stopLoss)document.getElementById('paperSL').value=d.stopLoss;
     if(d.takeProfit)document.getElementById('paperTP').value=d.takeProfit;
+    // Update header badge
+    const badge=document.getElementById('paperModeBadge');
+    const modeLabel=document.getElementById('modeLabel');
+    if(badge&&modeLabel){
+      if(d.enabled){
+        badge.style.display='inline-block';
+        modeLabel.textContent='Paper Mode';
+        modeLabel.style.color='var(--orange)';
+      } else {
+        badge.style.display='none';
+        modeLabel.textContent='Live';
+        modeLabel.style.color='var(--text2)';
+      }
+    }
   } catch(e){}
 }
 
@@ -746,12 +772,12 @@ async function loadPaperHistory(){
       list.innerHTML='<div style="color:var(--text2);padding:8px">No trades yet</div>';
       return;
     }
-    let html='<table style="width:100%;border-collapse:collapse"><tr style="border-bottom:1px solid var(--border)"><td style="padding:4px;font-weight:600">Side</td><td style="padding:4px">Entry</td><td style="padding:4px">Exit</td><td style="padding:4px">P&L</td><td style="padding:4px">Reason</td></tr>';
+    let html='<table style="width:100%;border-collapse:collapse"><tr style="border-bottom:1px solid var(--border)"><td style="padding:4px;font-weight:600"><span class="paper-badge">PAPER</span></td><td style="padding:4px">Side</td><td style="padding:4px">Entry</td><td style="padding:4px">Exit</td><td style="padding:4px">P&L</td><td style="padding:4px">Reason</td></tr>';
     r.trades.slice().reverse().forEach(t=>{
       const pnlClass=t.pnl>=0?'color:#22c55e':'color:#ef4444';
       const sideClass=t.side==='LONG'?'color:#22c55e':'color:#f97316';
-      const dur=Math.floor(t.duration/1000)+'s';
       html+=`<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:4px"><span class="paper-badge">P</span></td>
         <td style="padding:4px;font-weight:600;${sideClass}">${t.side}</td>
         <td style="padding:4px">$${t.entryPrice.toFixed(2)}</td>
         <td style="padding:4px">$${t.exitPrice.toFixed(2)}</td>
@@ -770,12 +796,103 @@ async function clearPaperHistory(){
   log('Paper history cleared','system');
 }
 
+// Paper equity chart
+let paperEquityChart = null;
+let paperEquityVisible = false;
+
+async function initPaperEquityChart() {
+  if (paperEquityChart) return;
+  const ctx = document.getElementById('paperEquityChart').getContext('2d');
+  paperEquityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Equity',
+        data: [],
+        borderColor: '#a371f7',
+        backgroundColor: 'rgba(163,113,247,0.15)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        borderWidth: 2,
+        yAxisID: 'y'
+      }, {
+        label: 'Drawdown',
+        data: [],
+        borderColor: '#f0883e',
+        backgroundColor: 'rgba(240,136,62,0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        borderWidth: 1.5,
+        borderDash: [4, 4],
+        yAxisID: 'y2'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false, grid: { display: false } },
+        y: {
+          type: 'linear',
+          display: true,
+          position: 'left',
+          grid: { color: 'rgba(48,54,61,.5)' },
+          ticks: { color: '#a371f7', font: { size: 9 }, callback: v => '$' + v.toFixed(0) }
+        },
+        y2: {
+          type: 'linear',
+          display: true,
+          position: 'right',
+          min: 0,
+          max: 5,
+          grid: { display: false },
+          ticks: { color: '#f0883e', font: { size: 9 }, callback: v => v.toFixed(1) + '%' }
+        }
+      }
+    }
+  });
+}
+
+async function updatePaperEquity() {
+  if (!paperEquityVisible || !paperActive) return;
+  try {
+    const data = await fetch('/api/paper-trading/equity-curve').then(r => r.json());
+    if (!data || data.length === 0) return;
+    if (!paperEquityChart) await initPaperEquityChart();
+    const labels = data.map(d => new Date(d.time).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    paperEquityChart.data.labels = labels;
+    paperEquityChart.data.datasets[0].data = data.map(d => d.equity);
+    paperEquityChart.data.datasets[1].data = data.map(d => d.drawdown);
+    // Auto-scale drawdown y-axis
+    const maxDD = Math.max(...data.map(d => d.drawdown));
+    paperEquityChart.options.scales.y2.max = Math.max(5, maxDD * 1.2);
+    paperEquityChart.update('none');
+  } catch(e) {}
+}
+
+// Toggle paper equity chart
+async function togglePaperEquity() {
+  paperEquityVisible = !paperEquityVisible;
+  const section = document.getElementById('paperEquitySection');
+  section.style.display = paperEquityVisible ? 'block' : 'none';
+  if (paperEquityVisible) {
+    await initPaperEquityChart();
+    await updatePaperEquity();
+  }
+}
+
 // Update paper history periodically when visible
 setInterval(()=>{if(paperHistoryVisible)loadPaperHistory();},5000);
 
 // Paper update interval
 setInterval(updatePaper,3000);
 setInterval(update,2000);
+setInterval(updatePaperEquity,3000);
 update();
 updatePaper();
 

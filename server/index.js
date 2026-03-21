@@ -35,6 +35,22 @@ let paperTrading = {
         currentStreak: 0, bestStreak: 0, worstStreak: 0
     }
 };
+
+// Paper trading equity curve tracking
+let paperEquityCurve = [];  // [{time, equity, drawdown, price}]
+const MAX_EQUITY_CURVE = 500; // keep last 500 data points
+
+// Paper Trading Logger - separate log file for paper trades
+const PAPER_LOG_FILE = path.join(__dirname, '..', 'paper-trades.log');
+function paperLog(...args) {
+    const msg = `[${new Date().toISOString()}] [PAPER] ${args.join(' ')}`;
+    console.log(msg);
+    try {
+        fs.appendFileSync(PAPER_LOG_FILE, msg + '\n');
+    } catch(e) {
+        console.error('Paper log write failed:', e.message);
+    }
+}
 let paperCandles = [];
 let paperStrategy = 'trend';
 let paperPositionSize = 0.95;
@@ -274,6 +290,24 @@ async function paperTradingStep() {
     if (prices.btc === 0) return;
     
     const now = Date.now();
+    
+    // Always record equity curve when paper trading is active
+    const currentPrice = prices.btc;
+    const posValue = paperPositionsValue();
+    const totalEquity = paperFreeCapital() + posValue;
+    const peakEquity = paperEquityCurve.length > 0
+        ? Math.max(...paperEquityCurve.map(e => e.equity))
+        : totalEquity;
+    const drawdown = peakEquity > 0 ? ((peakEquity - totalEquity) / peakEquity) * 100 : 0;
+    
+    paperEquityCurve.push({
+        time: now,
+        equity: totalEquity,
+        drawdown,
+        price: currentPrice
+    });
+    if (paperEquityCurve.length > MAX_EQUITY_CURVE) paperEquityCurve.shift();
+    
     if (now - paperLastTradeTime < PAPER_TRADE_COOLDOWN) return;
     
     // Fetch fresh candles
@@ -282,7 +316,6 @@ async function paperTradingStep() {
     
     const ind = calcIndicators(candles);
     const signal = paperSignal(candles, ind);
-    const currentPrice = prices.btc;
     
     // Update unrealized P&L and check SL/TP
     let slTpTriggered = false;
@@ -337,6 +370,7 @@ async function paperTradingStep() {
         paperTrading.capital -= qty * currentPrice + fee;
         paperLastTradeTime = now;
         console.log(`📈 PAPER LONG: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
+        paperLog('OPEN LONG | Qty:', qty.toFixed(6), 'BTC | Entry: $' + currentPrice.toLocaleString(), '| SL: $' + sl.toFixed(2), '| TP: $' + tp.toFixed(2));
     } else if (signal === 'SHORT' && !paperOpenPosition) {
         // OPEN SHORT - borrow and sell, profit from price drop
         const qty = (paperTrading.capital * paperPositionSize) / currentPrice;
@@ -359,6 +393,7 @@ async function paperTradingStep() {
         paperTrading.capital += qty * currentPrice - fee; // Receive USDT from short sale
         paperLastTradeTime = now;
         console.log(`📉 PAPER SHORT: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
+        paperLog('OPEN SHORT | Qty:', qty.toFixed(6), 'BTC | Entry: $' + currentPrice.toLocaleString(), '| SL: $' + sl.toFixed(2), '| TP: $' + tp.toFixed(2));
     } else if ((signal === 'SELL' || slTpTriggered) && paperOpenPosition) {
         // CLOSE position (不管是 LONG 还是 SHORT)
         let pnl, exitValue;
@@ -400,8 +435,10 @@ async function paperTradingStep() {
         paperLastTradeTime = now;
         if (slTpTriggered) {
             console.log(`⚡ PAPER ${closed.side} ${slTpReason}: P&L $${netPnl.toFixed(2)} @ $${currentPrice.toLocaleString()}`);
+            paperLog('CLOSE', closed.side, '| Exit:', '$' + currentPrice.toLocaleString(), '| P&L: $' + netPnl.toFixed(2), '| Reason:', slTpReason);
         } else {
             console.log(`📕 PAPER CLOSE ${closed.side}: P&L $${netPnl.toFixed(2)} @ $${currentPrice.toLocaleString()}`);
+            paperLog('CLOSE', closed.side, '| Exit:', '$' + currentPrice.toLocaleString(), '| P&L: $' + netPnl.toFixed(2), '| Reason: SIGNAL');
         }
         updatePaperStats();
     }
@@ -543,12 +580,80 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: true, enabled: false }));
         return;
     }
+
+    // GET /api/paper-trading/status - zwraca czy paper trading jest włączony
+    if (url === '/api/paper-trading/status') {
+        res.end(JSON.stringify({
+            enabled: paperTrading.enabled,
+            capital: paperTrading.capital,
+            stats: paperTrading.stats,
+            stopLoss: paperTrading.stopLoss,
+            takeProfit: paperTrading.takeProfit,
+            strategy: paperStrategy
+        }));
+        return;
+    }
+
+    // POST /api/paper-trading/toggle - przełącza tryb
+    if (url === '/api/paper-trading/toggle') {
+        paperTrading.enabled = !paperTrading.enabled;
+        if (paperTrading.enabled) {
+            // Start paper trading - reset capital if fresh start
+            if (paperTrading.capital === 0 || paperTrading.closedTrades.length === 0) {
+                paperTrading.capital = 1000;
+                paperTrading.positions = [];
+                paperTrading.closedTrades = [];
+                paperOpenPosition = null;
+            }
+            updatePaperStats();
+            paperLog('Paper Trading ENABLED - Mode: ' + paperStrategy + ' | Capital: $' + paperTrading.capital.toFixed(2));
+            console.log('📈 Paper Trading ENABLED via toggle');
+        } else {
+            // Stop - close open positions
+            if (paperOpenPosition && prices.btc > 0) {
+                const currentPrice = prices.btc;
+                const pnl = paperOpenPosition.side === 'LONG'
+                    ? (currentPrice - paperOpenPosition.entryPrice) * paperOpenPosition.quantity
+                    : (paperOpenPosition.entryPrice - currentPrice) * paperOpenPosition.quantity;
+                const exitFee = currentPrice * paperOpenPosition.quantity * 0.001;
+                const netPnl = pnl - paperOpenPosition.fee - exitFee;
+                paperTrading.closedTrades.push({
+                    id: paperOpenPosition.id,
+                    side: paperOpenPosition.side,
+                    entryPrice: paperOpenPosition.entryPrice,
+                    exitPrice: currentPrice,
+                    quantity: paperOpenPosition.quantity,
+                    fee: paperOpenPosition.fee + exitFee,
+                    pnl: netPnl,
+                    timestamp: Date.now(),
+                    entryTime: paperOpenPosition.entryTime,
+                    exitReason: 'MANUAL_CLOSE'
+                });
+                if (paperOpenPosition.side === 'LONG') {
+                    paperTrading.capital += paperOpenPosition.quantity * currentPrice - exitFee;
+                } else {
+                    paperTrading.capital -= paperOpenPosition.quantity * currentPrice + exitFee;
+                    paperTrading.capital += netPnl;
+                }
+                paperLog('Position closed on disable: ' + paperOpenPosition.side + ' | P&L: $' + netPnl.toFixed(2) + ' | Reason: MANUAL_CLOSE');
+                paperOpenPosition = null;
+                paperTrading.positions = [];
+            }
+            updatePaperStats();
+            paperLog('Paper Trading DISABLED');
+            console.log('📉 Paper Trading DISABLED via toggle');
+        }
+        res.end(JSON.stringify({ success: true, enabled: paperTrading.enabled }));
+        return;
+    }
     
+    // POST /api/paper-trading/reset - resetuje paper portfolio do początkowych wartości
     if (url === '/api/paper-trading/reset') {
         paperTrading.capital = 1000;
         paperTrading.positions = [];
         paperTrading.closedTrades = [];
         paperOpenPosition = null;
+        paperEquityCurve = [];
         updatePaperStats();
         res.end(JSON.stringify({ success: true }));
         return;
@@ -596,6 +701,12 @@ const server = http.createServer(async (req, res) => {
             duration: t.timestamp - t.entryTime
         }));
         res.end(JSON.stringify({ trades: history, total: history.length }));
+        return;
+    }
+    
+    // Paper trading equity curve
+    if (url === '/api/paper-trading/equity-curve') {
+        res.end(JSON.stringify(paperEquityCurve));
         return;
     }
     

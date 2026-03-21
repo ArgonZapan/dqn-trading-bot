@@ -3,126 +3,248 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DQN Bot</title>
+<title>DQN Trading Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-body{font-family:Segoe UI,sans-serif;background:#0a0e17;color:#e6edf3}
-.header{background:linear-gradient(135deg,#161b22,#1f2937;padding:20px 24px;border-bottom:1px solid #30363d}
-.header h1{color:#58a6ff;font-size:1.5rem}
-.container{display:grid;grid-template-columns:1fr 320px;gap:20px;padding:20px;max-width:1600px;margin:0 auto}
-.card{background:#161b22;border:1px solid #30363d;border-radius:12px;overflow:hidden}
-.card-header{padding:14px 18px;background:#1c2128;border-bottom:1px solid #30363d;font-size:.8rem;text-transform:uppercase;color:#8b949e;font-weight:600}
-.card-body{padding:18px}
-.prices{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
-.price-box{background:#0d1117;border-radius:10px;padding:20px;text-align:center}
-.price-label{font-size:.8rem;color:#8b949e}
-.price-value{font-size:1.6rem;font-weight:700;margin-top:8px}
-.metric{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #21262d}
-.metric:last-child{border:none}
-.metric-label{color:#8b949e}
-.metric-value{font-weight:600}
-.green{color:#3fb950}
-.red{color:#f85149}
-.blue{color:#58a6ff}
-.btn{background:#238636;color:#fff;border:none;padding:14px 20px;border-radius:8px;cursor:pointer;width:100%;font-size:.9rem;font-weight:600}
-.btn:hover{background:#2ea043}
-.btn.stop{background:#da3633}
-.logs{background:#0d1117;border-radius:8px;padding:12px;height:100px;overflow-y:auto;font-family:monospace;font-size:.75rem}
-.log-entry{margin-bottom:4px;padding:4px 8px;border-radius:4px}
-.log-entry.info{background:#1f2937;color:#8b949e}
-.log-entry.buy{background:rgba(63,185,80,0.2);color:#3fb950}
-.log-entry.sell{background:rgba(248,81,73,0.2);color:#f85149}
-.progress{background:#21262d;height:6px;border-radius:3px;margin-top:10px}
-.progress-fill{height:100%;background:linear-gradient(90deg,#238636,#3fb950;border-radius:3px;transition:width .3s}
-@media(max-width:900px){.container{grid-template-columns:1fr}.prices{grid-template-columns:1fr}
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+--bg:#0d1117;
+--bg2:#161b22;
+--bg3:#1c2128;
+--border:#30363d;
+--text:#c9d1d9;
+--text2:#8b949e;
+--green:#3fb950;
+--red:#f85149;
+--blue:#58a6ff;
+--orange:#f0883e;
+--purple:#a371f7;
+}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.header{background:var(--bg2);border-bottom:1px solid var(--border);padding:24px 32px;display:flex;justify-content:space-between;align-items:center}
+.header h1{font-size:1.4rem;font-weight:700;color:var(--blue)}
+.header h1 span{color:var(--text2);font-weight:400;font-size:.9rem}
+.status-dot{width:10px;height:10px;background:var(--green);border-radius:50%;display:inline-block;margin-right:8px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.main{padding:24px;max-width:1400px;margin:0 auto}
+.grid{display:grid;grid-template-columns:1fr 300px;gap:20px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.card-header{padding:16px 20px;background:var(--bg3);border-bottom:1px solid var(--border);font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);display:flex;align-items:center;gap:8px}
+.card-body{padding:20px}
+.prices{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.price-card{background:var(--bg);border-radius:12px;padding:20px;text-align:center;transition:transform .2s,box-shadow .2s;border:1px solid transparent}
+.price-card:hover{transform:translateY(-4px);box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.price-card.btc{border-color:rgba(247,147,26,.3)}
+.price-card.eth{border-color:rgba(98,126,234,.3)}
+.price-card.sol{border-color:rgba(20,241,149,.3)}
+.price-label{font-size:.7rem;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.price-value{font-size:1.5rem;font-weight:700}
+.price-change{font-size:.8rem;margin-top:6px;font-weight:500}
+.up{color:var(--green)}
+.down{color:var(--red)}
+.metrics-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.metric-box{background:var(--bg);border-radius:10px;padding:16px}
+.metric-label{font-size:.65rem;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.metric-value{font-size:1.3rem;font-weight:700}
+.big-num{font-size:1.8rem;font-weight:700}
+.bar-container{background:var(--bg);border-radius:8px;height:8px;margin-top:12px;overflow:hidden}
+.bar{height:100%;border-radius:8px;transition:width .5s ease}
+.bar.green{background:linear-gradient(90deg,var(--green),#2ea043)}
+.bar.blue{background:linear-gradient(90deg,var(--blue),#1f6feb)}
+.btn{background:linear-gradient(135deg,var(--green),#2ea043);color:#fff;border:none;padding:16px 24px;border-radius:12px;cursor:pointer;width:100%;font-size:.9rem;font-weight:600;transition:all .2s;text-transform:uppercase;letter-spacing:1px}
+.btn:hover{transform:scale(1.02);box-shadow:0 4px 12px rgba(63,185,80,.3)}
+.btn.stop{background:linear-gradient(135deg,var(--red),#da3633)}
+.btn.stop:hover{box-shadow:0 4px 12px rgba(248,81,73,.3)}
+.logs{background:var(--bg);border-radius:12px;padding:16px;height:140px;overflow-y:auto;font-family:'SF Mono',Monaco,monospace;font-size:.7rem}
+.log-entry{margin-bottom:6px;padding:6px 10px;border-radius:6px}
+.log-entry.info{background:rgba(139,148,158,.1);color:var(--text2)}
+.log-entry.buy{background:rgba(63,185,80,.15);color:var(--green)}
+.log-entry.sell{background:rgba(248,81,73,.15);color:var(--red)}
+.log-entry.system{background:rgba(88,166,255,.1);color:var(--blue)}
+.chart-placeholder{background:var(--bg);border-radius:12px;height:200px;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:.8rem;border:1px dashed var(--border)}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.card{animation:fadeIn .3s ease}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.prices{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <div class="header">
-<h1>🤖 DQN Trading Bot | Status: <span id="status style="color:#3fb950">Łączenie...</span></div>
-<div class="container">
+<div>
+<h1>🤖 DQN Trading <span>Dashboard</span></h1>
+</div>
+<div style="display:flex;align-items:center;gap:16px">
+<span class="status-dot"></span>
+<span style="font-size:.8rem;color:var(--text2)">Live</span>
+</div>
+</div>
 <div class="main">
+<div class="grid">
+<div>
 <div class="card">
-<div class="card-header">📈 Ceny Live</div>
+<div class="card-header">💰 Live Ceny</div>
 <div class="card-body">
 <div class="prices">
-<div class="price-box btc">
-<div class="price-label">BTC/USDT</div>
+<div class="price-card btc">
+<div class="price-label">Bitcoin</div>
 <div class="price-value" id="btc">--</div>
-<div class="price-change" id="btcChange">--</div>
+<div class="price-change up" id="btcChange">--</div>
 </div>
-<div class="price-box eth">
-<div class="price-label">ETH/USDT</div>
+<div class="price-card eth">
+<div class="price-label">Ethereum</div>
 <div class="price-value" id="eth">--</div>
-<div class="price-change" id="ethChange">--</div>
+<div class="price-change up" id="ethChange">--</div>
 </div>
-<div class="price-box sol">
-<div class="price-label">SOL/USDT</div>
+<div class="price-card sol">
+<div class="price-label">Solana</div>
 <div class="price-value" id="sol">--</div>
-<div class="price-change" id="solChange">--</div>
+<div class="price-change up" id="solChange">--</div>
 </div>
+</div>
+</div>
+</div>
+<div class="card" style="margin-top:20px">
+<div class="card-header">📊 Wykres</div>
+<div class="card-body">
+<div class="chart-placeholder">📈 Trading Chart Placeholder</div>
 </div>
 </div>
 <div class="card" style="margin-top:20px">
 <div class="card-header">📋 Logi</div>
 <div class="card-body">
-<div class="logs" id="logs"></div>
+<div class="logs" id="logs">
+<div class="log-entry system">System uruchomiony</div>
 </div>
 </div>
 </div>
-<div class="sidebar">
+</div>
+<div>
 <div class="card">
-<div class="card-header">⚙️ Sterowanie</div>
+<div class="card-header">⚙️ Kontrola</div>
 <div class="card-body">
-<button class="btn" id="startBtn">▶ START</button>
+<button class="btn" id="startBtn">▶ START TRADING</button>
 </div>
 </div>
-<div class="card" style="margin-top:15px">
+<div class="card" style="margin-top:16px">
 <div class="card-header">🧠 Agent</div>
 <div class="card-body">
-<div class="metric"><span class="metric-label">Epsilon</span><span class="metric-value blue" id="epsilon">1.000</span></div>
-<div class="metric"><span class="metric-label">Episode</span><span id="episode">0</span></div>
-<div class="metric"><span class="metric-label">Buffer</span><span id="buffer">0</span></div>
-<div class="metric"><span class="metric-label">Loss</span><span id="loss">--</span></div>
-<div class="progress"><div class="progress-fill" id="epsilonBar" style="width:100%"></div></div>
+<div class="metrics-grid">
+<div class="metric-box">
+<div class="metric-label">Epsilon</div>
+<div class="metric-value blue" id="epsilon">1.000</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Episode</div>
+<div class="metric-value" id="episode">0</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Buffer</div>
+<div class="metric-value" id="buffer">0</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Loss</div>
+<div class="metric-value" id="loss">--</div>
 </div>
 </div>
-<div class="card" style="margin-top:15px">
+<div class="bar-container">
+<div class="bar green" id="epsilonBar" style="width:100%"></div>
+</div>
+</div>
+</div>
+<div class="card" style="margin-top:16px">
 <div class="card-header">💼 Portfolio</div>
 <div class="card-body">
-<div class="metric"><span class="metric-label">USDT</span><span class="metric-value green" id="usdt">$1000</span></div>
-<div class="metric"><span class="metric-label">BTC</span><span id="btcHold">0</span></div>
-<div class="metric"><span class="metric-label">Total</span><span class="metric-value green" id="total">$1000</span></div>
+<div class="metrics-grid">
+<div class="metric-box">
+<div class="metric-label">USDT</div>
+<div class="metric-value green" id="usdt">$1000</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">BTC</div>
+<div class="metric-value" id="btcHold">0</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">ETH</div>
+<div class="metric-value" id="ethHold">0</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Total</div>
+<div class="metric-value green big-num" id="total">$1000</div>
+</div>
+</div>
+</div>
+</div>
+<div class="card" style="margin-top:16px">
+<div class="card-header">📈 Trading</div>
+<div class="card-body">
+<div class="metrics-grid">
+<div class="metric-box">
+<div class="metric-label">Trades</div>
+<div class="metric-value" id="trades">0</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Win Rate</div>
+<div class="metric-value green" id="winRate">0%</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">P&L</div>
+<div class="metric-value" id="pnl">$0</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Drawdown</div>
+<div class="metric-value red" id="drawdown">0%</div>
+</div>
+</div>
+</div>
 </div>
 </div>
 </div>
 <script>
 let trading=false;
-function log(msg,type='info'){const el=document.getElementById('logs');const d=document.createElement('div');d.className='log-entry '+type;d.textContent=new Date().toLocaleTimeString()+' '+msg;el.appendChild(d);el.scrollTop=el.scrollHeight;if(el.children.length>50)el.removeChild(el.firstChild)}
-async function update(){
-try {
-const [p,m,b] = await Promise.all([
-fetch('/api/prices').then(r=>r.json()),
-fetch('/api/metrics').then(r=>r.json()),
-fetch('/api/portfolio').then(r=>r.json())
-]);
-document.getElementById('btc').textContent='$'+p.btc.toLocaleString();
-document.getElementById('loss').textContent=m.avgLoss?.toFixed(6)||'--';
-document.getElementById('episode').textContent=m.episode||0;
-document.getElementById('buffer').textContent=m.bufferSize||0;
-document.getElementById('epsilon').textContent=(m.epsilon||1).toFixed(3);
-document.getElementById('epsilonBar').style.width=((m.epsilon||1)*100+'%');
-document.getElementById('total').textContent='$'+(b.total||1000).toFixed(2);
-} catch(e){log('Błąd: '+e.message,'sell')}
+function log(msg,type='info'){
+  const el=document.getElementById('logs');
+  const d=document.createElement('div');
+  d.className='log-entry '+type;
+  d.textContent=new Date().toLocaleTimeString()+' '+msg;
+  el.appendChild(d);
+  el.scrollTop=el.scrollHeight;
+  if(el.children.length>30)el.removeChild(el.firstChild)
 }
-setInterval(update,2000);
-log('Dashboard ready','info');
-update();
+async function update(){
+  try {
+    const [p,m,b] = await Promise.all([
+      fetch('/api/prices').then(r=>r.json()),
+      fetch('/api/metrics').then(r=>r.json()),
+      fetch('/api/portfolio').then(r=>r.json())
+    ]);
+    document.getElementById('btc').textContent='$'+p.btc?.toLocaleString()||'--';
+    document.getElementById('eth').textContent='$'+p.eth?.toLocaleString()||'--';
+    document.getElementById('sol').textContent='$'+p.sol?.toLocaleString()||'--';
+    document.getElementById('loss').textContent=m.avgLoss?.toFixed(6)||'--';
+    document.getElementById('episode').textContent=m.episode||0;
+    document.getElementById('buffer').textContent=m.bufferSize||0;
+    document.getElementById('epsilon').textContent=(m.epsilon||1).toFixed(3);
+    document.getElementById('epsilonBar').style.width=((m.epsilon||1)*100)+'%';
+    document.getElementById('total').textContent='$'+(b.total||1000).toFixed(2);
+    document.getElementById('usdt').textContent='$'+(b.usdt||1000).toFixed(2);
+    document.getElementById('btcHold').textContent=(b.btc||0).toFixed(4);
+    document.getElementById('ethHold').textContent=(b.eth||0).toFixed(4);
+    if(m.tradesCount!==undefined)document.getElementById('trades').textContent=m.tradesCount;
+    if(m.winRate!==undefined){
+      document.getElementById('winRate').textContent=m.winRate.toFixed(1)+'%';
+      document.getElementById('winRate').className=m.winRate>50?'metric-value green':'metric-value red';
+    }
+  } catch(e){log('API error: '+e.message,'sell')}
+}
 document.getElementById('startBtn').onclick=()=>{
-trading=!trading;
-const b=document.getElementById('startBtn');
-b.textContent=trading?'⏹ STOP':'▶ START';
-b.className=trading?'btn stop':'btn';
+  trading=!trading;
+  const b=document.getElementById('startBtn');
+  b.textContent=trading?'⏹ STOP':'▶ START TRADING';
+  b.className=trading?'btn stop':'btn';
+  log(trading?'Trading started':'Trading stopped',trading?'buy':'info');
 };
+log('Dashboard loaded','system');
+setInterval(update,2000);
+update();
 </script>
 </body>
 </html>

@@ -192,9 +192,11 @@ if (!fs.existsSync(MODELS_DIR)) fs.mkdirSync(MODELS_DIR, { recursive: true });
 // RL Components
 const Env = require('../src/environment');
 const Agent = require('../src/dqnAgent');
+const Hyperopt = require('../src/hyperopt');
 
 const env = new Env('BTCUSDT', 59);
 const agent = new Agent(300, 3);
+const hyperopt = new Hyperopt();
 
 // Load last model if exists
 async function loadLastModel() {
@@ -981,6 +983,28 @@ const server = http.createServer(async (req, res) => {
         return;
     }
     
+    // Hyperparameter Optimizer endpoints
+    if (url === '/api/hyperparams' && req.method === 'GET') {
+        res.end(JSON.stringify(hyperopt.getHyperparams()));
+        return;
+    }
+    
+    if (url === '/api/hyperparams' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+            try {
+                const data = JSON.parse(body);
+                const updated = hyperopt.update(data.hyperparams || {}, data.metrics || {});
+                res.end(JSON.stringify({ success: true, hyperparams: updated }));
+            } catch(e) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: 'Invalid request body' }));
+            }
+        });
+        return;
+    }
+    
     // Static files
     res.setHeader('Content-Type', 'text/html');
     const fp = path.join(__dirname, '..', url === '/' ? 'client/index.html' : url);
@@ -1069,6 +1093,24 @@ async function trainingStep() {
 
         // Send training update alert
         checkEpisodeAlerts(completedEpisode, endEquity, pnlPercent, completedTrades.length);
+
+        // Update hyperparameter optimizer with episode metrics
+        const winCount = completedTrades.filter(t => t.action === 'BUY' && t.pnl > 0).length;
+        const episodeHyperparams = {
+            learningRate: agent.learningRate || 0.0005,
+            gamma: agent.gamma || 0.99,
+            epsilonDecay: agent.epsilonDecay || 0.995,
+            epsilonMin: 0.01,
+            batchSize: agent.batchSize || 32
+        };
+        const episodeMetrics = {
+            reward: pnlPercent,
+            winRate: completedTrades.length > 0 ? winCount / completedTrades.length : 0,
+            drawdown: maxDrawdown,
+            steps: metrics.steps,
+            tradesCount: completedTrades.length
+        };
+        hyperopt.update(episodeHyperparams, episodeMetrics);
 
         // Reset episode tracking state BEFORE starting new episode
         episodeTrades = [];

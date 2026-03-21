@@ -257,6 +257,30 @@ input[type="number"], input[type="text"], select {
   /* Live trading mobile */
   #liveTradingCard .card-body{padding:12px}
   #livePositionSection .card-body{padding:10px}
+  /* SL/TP inputs - 3-col grid on tablet, stack on mobile */
+  .live-sl-tp-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px}
+  .live-sl-tp-item{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px}
+  .live-sl-tp-item label{display:block;font-size:.55rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px}
+  .live-sl-tp-item input{width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 4px;border-radius:4px;font-size:.8rem;font-weight:600;min-height:40px}
+  /* LONG/SHORT buttons - full width row */
+  .live-trade-btns{display:flex;gap:8px;margin-bottom:12px}
+  .live-trade-btns .btn{flex:1;min-height:48px;font-size:.85rem!important;font-weight:700;padding:12px!important}
+  /* Paper SL/TP row */
+  .paper-sltp-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+  .paper-sltp-item{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px}
+  .paper-sltp-item label{display:block;font-size:.55rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px}
+  .paper-sltp-item input{width:100%;min-height:40px}
+  .live-sl-tp-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+  .live-sl-tp-grid .sl-tp-item{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px}
+  .live-sl-tp-item label{display:block;font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px}
+  #liveSL,#liveTP,#livePositionSize{width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600;min-height:44px}
+  .live-btn-row{display:flex;gap:8px;margin-bottom:12px}
+  .live-btn-row .btn{flex:1;min-height:48px;font-size:.85rem!important;font-weight:700}
+  /* Paper SL/TP mobile */
+  .paper-sltp-row{display:flex;gap:8px;margin-bottom:12px}
+  .paper-sltp-row .paper-sltp-item{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px}
+  .paper-sltp-item label{display:block;font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px}
+  #paperSL,#paperTP{width:100%;min-height:44px}
   /* Modal adjustments */
   .modal-header{padding:14px 16px}
   .modal-body{padding:16px}
@@ -491,6 +515,7 @@ input[type="number"], input[type="text"], select {
 <option value="momentum">🚀 Momentum</option>
 <option value="macd">⚡ MACD Crossover</option>
 <option value="grid">🔲 Grid Trading</option>
+<option value="scalping">⚡ Scalping (EMA5/21)</option>
 </select>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
 <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
@@ -584,21 +609,18 @@ input[type="number"], input[type="text"], select {
 <div id="liveNoPosition" style="text-align:center;padding:16px 0;color:var(--text2);font-size:.7rem;margin-bottom:12px">
 No active position
 </div>
-<div style="display:flex;gap:8px;margin-bottom:12px">
+<div class="live-trade-btns">
 <button class="btn" id="liveOpenLongBtn" onclick="liveOpenLong()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,var(--green),#2ea043)">📈 LONG</button>
 <button class="btn" id="liveOpenShortBtn" onclick="liveOpenShort()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,var(--red),#da3633)">📉 SHORT</button>
 </div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
-<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
-<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Position Size</div>
-<input type="number" id="livePositionSize" value="95" min="1" max="100" step="1" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+<div class="live-sl-tp-row">
+<div class="live-sl-tp-item"><label>Size %</label>
+<input type="number" id="livePositionSize" value="95" min="1" max="100" step="1">
 </div>
-<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
-<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">SL %</div>
+<div class="live-sl-tp-item"><label>SL %</label>
 <input type="number" id="liveSL" value="2.0" min="0.1" max="50" step="0.1" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--red);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
 </div>
-<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
-<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">TP %</div>
+<div class="live-sl-tp-item"><label>TP %</label>
 <input type="number" id="liveTP" value="4.0" min="0.1" max="100" step="0.1" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--green);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
 </div>
 </div>

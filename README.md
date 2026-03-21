@@ -224,18 +224,107 @@ docker-compose up -d
 
 ---
 
-## 🔗 API Endpoints
+## 📈 Paper Trading
+
+Pełna symulacja tradingu z realnymi cenami z Binance. **Paper trading jest zalecany przed handlem na żywo.**
+
+### Funkcje
+
+- **Trailing Stop Loss** — aktywacja przy 1% zysku, trailing 0.75% pod szczytem
+- **Stop Loss / Take Profit** — konfigurowalne (domyślnie SL: 2%, TP: 4%)
+- **Strategie** — trend, mean_reversion, momentum, macd, scalping, grid
+- **Equity Curve** — śledzenie equity + drawdown w czasie rzeczywistym
+- **Historia** — logowanie wszystkich transakcji paperowych
+- **Alerty** — powiadomienia Telegram przy milestone'ach i dużych drawdownach
+
+### Uruchomienie
+
+1. Dashboard → sekcja **📄 Paper Trading**
+2. Wybierz strategię z dropdown
+3. Kliknij **▶ START PAPER TRADING**
+4. Monitoruj equity curve i statystyki
+
+### API Endpoints Paper Trading
 
 | Method | Endpoint | Opis |
 |--------|----------|------|
-| GET | `/api/status` | Status agenta i portfolio |
-| GET | `/api/metrics` | Metryki portfolio |
-| GET | `/api/trades` | Historia transakcji |
-| GET | `/api/balance` | Balance konta Binance |
-| POST | `/api/start` | Start agenta |
-| POST | `/api/stop` | Stop agenta |
-| POST | `/api/train` | Trenuj agenta |
-| POST | `/api/backtest` | Uruchom backtest |
+| GET | `/api/paper-trading` | Status, capital, pozycje, statystyki |
+| POST | `/api/paper-trading/start` | Start paper trading (kapitał $1000) |
+| POST | `/api/paper-trading/stop` | Stop paper trading |
+| POST | `/api/paper-trading/toggle` | Toggle paper trading |
+| POST | `/api/paper-trading/reset` | Reset do $1000 |
+| POST | `/api/paper-trading/sltp` | Ustaw SL/TP (body: `{"sl":2.0,"tp":4.0}`) |
+| POST | `/api/paper-trading/strategy` | Ustaw strategię (body: `{"strategy":"trend"}`) |
+| GET | `/api/paper-trading/history` | Historia zamkniętych trade'ów |
+| GET | `/api/paper-trading/equity-curve` | Equity curve + drawdown |
+| POST | `/api/paper-trading/clear-history` | Wyczyść historię |
+
+### Live Trading vs Paper Trading
+
+| Cecha | Paper | Live |
+|-------|-------|------|
+| Pieniądze | Symulowane | Realne |
+| API Binance | Nie wymaga kluczy | Wymaga kluczy z uprawnieniami |
+| Ryzyko | Brak | Pełne |
+| Trailing Stop | ✅ | ✅ |
+| SL/TP | ✅ | ✅ |
+| Alerty Telegram | ✅ | ✅ |
+
+> ⚠️ **WAŻNE:** Przed handlem na żywo przetestuj strategię w paper mode przez minimum 24h.
+
+---
+
+## 🔗 API Endpoints
+
+### Agent & Training
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/status` | Status serwera |
+| GET | `/api/prices` | Aktualne ceny BTC, ETH, SOL |
+| POST | `/api/training/start` | Start treningu |
+| POST | `/api/training/stop` | Stop treningu |
+| POST | `/api/training/save` | Zapisz model ręcznie |
+| GET | `/api/hyperparams` | Pobierz hyperparametry |
+| POST | `/api/hyperparams` | Zaktualizuj hyperparametry |
+
+### Episode Data
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/episode-data` | Dane ostatniego epizodu (trades, equity, epsilon) |
+| GET | `/api/episode-history` | Historia zakończonych epizodów |
+| GET | `/api/episode-history/detail?episode=N` | Szczegóły epizodu N |
+
+### Portfolio & Metrics
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/portfolio` | Stan portfolio |
+| GET | `/api/metrics` | Metryki (Sharpe, MaxDD, WinRate, PF) |
+| GET | `/api/trades` | Ostatnie 20 transakcji |
+| GET | `/api/htf-trend` | High timeframe trend |
+
+### Live Trading (Binance)
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/live-trading/status` | Status live tradera |
+| POST | `/api/live-trading/start` | Start live tradera |
+| POST | `/api/live-trading/stop` | Stop live tradera |
+| GET | `/api/live-trading/stats` | Live trading stats |
+| POST | `/api/live-trading/open-long` | Otwórz long (body: `{"quantity":0.001}`) |
+| POST | `/api/live-trading/close-long` | Zamknij long |
+| POST | `/api/live-trading/configure` | Konfiguruj (apiKey, secret, SL, TP) |
+| GET | `/api/live-trading/history` | Historia live trade'ów |
+| GET | `/api/live-trading/config-check` | Sprawdź konfigurację API |
+
+### Alerts
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/alerter/status` | Status alertera |
+| POST | `/api/alerter/test` | Test notification |
 
 ---
 

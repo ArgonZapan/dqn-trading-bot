@@ -129,8 +129,19 @@ function getAlerter() {
             smtpUser: process.env.SMTP_USER,
             smtpPass: process.env.SMTP_PASS,
             alertEmail: process.env.ALERT_EMAIL,
+            alertPhone: process.env.ALERT_PHONE,
             telegramToken: process.env.TELEGRAM_BOT_TOKEN,
-            telegramChatId: process.env.TELEGRAM_CHAT_ID
+            telegramChatId: process.env.TELEGRAM_CHAT_ID,
+            twilioSid: process.env.TWILIO_ACCOUNT_SID,
+            twilioToken: process.env.TWILIO_AUTH_TOKEN,
+            twilioPhone: process.env.TWILIO_PHONE_NUMBER,
+            alertEnabled: process.env.ALERT_ENABLED !== 'false',
+            alertOnTrade: process.env.ALERT_ON_TRADE === 'true',
+            alertOnProfit: parseFloat(process.env.ALERT_ON_PROFIT) || 5,
+            alertOnLoss: parseFloat(process.env.ALERT_ON_LOSS) || 5,
+            alertOnTrainingStart: process.env.ALERT_ON_TRAINING_START === 'true',
+            alertOnTrainingEnd: process.env.ALERT_ON_TRAINING_END === 'true',
+            alertOnTradeSize: parseFloat(process.env.ALERT_ON_TRADE_SIZE) || 10
         });
     }
     return alerter;
@@ -686,6 +697,8 @@ async function paperTradingStep() {
         paperLastTradeTime = now;
         console.log(`📈 PAPER LONG: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
         paperLog('OPEN LONG | Qty:', qty.toFixed(6), 'BTC | Entry: $' + currentPrice.toLocaleString(), '| SL: $' + sl.toFixed(2), '| TP: $' + tp.toFixed(2));
+        // Trade alert
+        getAlerter().tradeAlert('BUY', currentPrice, qty, 0, paperPositionSize * 100).catch(() => {});
     } else if (signal === 'SHORT' && !paperOpenPosition) {
         // OPEN SHORT - borrow and sell, profit from price drop
         const qty = (paperTrading.capital * paperPositionSize) / currentPrice;
@@ -709,6 +722,8 @@ async function paperTradingStep() {
         paperLastTradeTime = now;
         console.log(`📉 PAPER SHORT: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
         paperLog('OPEN SHORT | Qty:', qty.toFixed(6), 'BTC | Entry: $' + currentPrice.toLocaleString(), '| SL: $' + sl.toFixed(2), '| TP: $' + tp.toFixed(2));
+        // Trade alert
+        getAlerter().tradeAlert('SHORT', currentPrice, qty, 0, paperPositionSize * 100).catch(() => {});
     } else if ((signal === 'SELL' || slTpTriggered) && paperOpenPosition) {
         // CLOSE position (不管是 LONG 还是 SHORT)
         let pnl, exitValue;
@@ -756,6 +771,15 @@ async function paperTradingStep() {
             paperLog('CLOSE', closed.side, '| Exit:', '$' + currentPrice.toLocaleString(), '| P&L: $' + netPnl.toFixed(2), '| Reason: SIGNAL');
         }
         updatePaperStats();
+        // Trade close alert with P&L
+        getAlerter().tradeAlert(closed.side === 'LONG' ? 'SELL' : 'BUY', currentPrice, closed.quantity, closed.pnl, paperPositionSize * 100).catch(() => {});
+        // Profit/loss threshold alerts
+        const totalEquity = paperFreeCapital() + paperPositionsValue();
+        if (closed.pnl > 0) {
+            getAlerter().profitAlert(totalEquity, 1000, ((totalEquity - 1000) / 1000) * 100).catch(() => {});
+        } else {
+            getAlerter().lossAlert(totalEquity, 1000, ((totalEquity - 1000) / 1000) * 100).catch(() => {});
+        }
     }
 }
 
@@ -1091,6 +1115,9 @@ const server = http.createServer(async (req, res) => {
             currentEpisodeSteps = [];
             episodeEpsilons = [];
             console.log('▶ Training started');
+            // Training start alert
+            const a = getAlerter();
+            a.trainingStartAlert(agent.episode, env.balance()).catch(() => {});
         }
         res.end(JSON.stringify({ success: true, trainingActive }));
         return;
@@ -1130,6 +1157,31 @@ const server = http.createServer(async (req, res) => {
             smtpHost: a.smtpHost || null,
             alertEmail: a.alertEmail || null
         }));
+        return;
+    }
+    
+    // GET /api/alerts/config - get alert settings (no secrets)
+    if (url === '/api/alerts/config' && method === 'GET') {
+        const a = getAlerter();
+        res.end(JSON.stringify(a.getConfig()));
+        return;
+    }
+    
+    // POST /api/alerts/config - update alert settings
+    if (url === '/api/alerts/config' && method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+            try {
+                const config = JSON.parse(body || '{}');
+                const a = getAlerter();
+                a.updateConfig(config);
+                res.end(JSON.stringify({ success: true, config: a.getConfig() }));
+            } catch(e) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: e.message }));
+            }
+        });
         return;
     }
 
@@ -1464,6 +1516,19 @@ async function trainingStep() {
 
         // Send training update alert
         checkEpisodeAlerts(completedEpisode, endEquity, pnlPercent, completedTrades.length);
+        
+        // Training end alert with full stats
+        const a = getAlerter();
+        a.trainingEndAlert({
+            episode: completedEpisode,
+            equity: endEquity,
+            pnlPct: pnlPercent,
+            tradesCount: completedTrades.length,
+            winRate: completedTrades.length > 0 ? (completedTrades.filter(t => t.pnl > 0).length / completedTrades.length) * 100 : 0,
+            maxDrawdown,
+            epsilon: agent.epsilon,
+            duration: Date.now() - trainingStartTime
+        }).catch(() => {});
 
         // Update hyperparameter optimizer with episode metrics
         const winCount = completedTrades.filter(t => t.action === 'BUY' && t.pnl > 0).length;

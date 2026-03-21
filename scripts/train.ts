@@ -20,7 +20,7 @@ async function train() {
   
   console.log(`\n🎮 Training ${episodes} episodes...`);
   for (let ep = 0; ep < episodes; ep++) {
-    const state = env.reset(klines);
+    let state = env.reset(klines);
     let totalReward = 0, done = false;
     agent.startEpisode();
     while (!done) {

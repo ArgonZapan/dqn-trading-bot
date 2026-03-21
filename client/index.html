@@ -73,6 +73,29 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .card{animation:fadeIn .3s ease}
 @media(max-width:900px){.grid{grid-template-columns:1fr}.prices{grid-template-columns:1fr}}
+/* Episode Detail Modal */
+#episodeModal{display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(4px)}
+#episodeModal.open{display:flex}
+.modal-content{background:var(--bg2);border:1px solid var(--border);border-radius:20px;width:90%;max-width:600px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;animation:modalSlide .25s ease}
+@keyframes modalSlide{from{opacity:0;transform:scale(.95) translateY(-20px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;background:var(--bg3);border-bottom:1px solid var(--border)}
+.modal-header h2{font-size:1rem;font-weight:700;margin:0}
+.modal-close{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:.8rem}
+.modal-close:hover{background:var(--bg3)}
+.modal-body{padding:24px;overflow-y:auto}
+.modal-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+.modal-stat{background:var(--bg);border-radius:12px;padding:14px;text-align:center}
+.modal-stat .label{font-size:.65rem;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.modal-stat .value{font-size:1.1rem;font-weight:700}
+.modal-stat .value.pos{color:var(--green)}
+.modal-stat .value.neg{color:var(--red)}
+.modal-trades{border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.modal-trade{display:grid;grid-template-columns:32px 1fr 80px 80px;padding:10px 16px;gap:12px;font-size:.75rem;border-bottom:1px solid var(--border);align-items:center}
+.modal-trade:last-child{border-bottom:none}
+.modal-trade.header{background:var(--bg3);color:var(--text2);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px}
+.modal-trade .buy{color:var(--green)}
+.modal-trade .sell{color:var(--red)}
+.modal-trade .empty{text-align:center;color:var(--text2);padding:20px}
 </style>
 </head>
 <body>
@@ -455,10 +478,40 @@ async function showEpisodeDetail(episode){
   try {
     const d=await fetch('/api/episode-history/detail?episode='+episode).then(r=>r.json());
     const trades=d.trades||[];
-    const msg=`Epizod #${d.episode} | P&L: ${d.pnlPercent>=0?'+':''}${d.pnlPercent.toFixed(2)}% | Trades: ${d.tradesCount} (${d.buyCount}B/${d.sellCount}S) | Max DD: ${d.maxDrawdown.toFixed(1)}% | Epsilon: ${(d.finalEpsilon||1).toFixed(3)}`;
-    log(msg,'system');
-  } catch(e){log('Nie można wczytać detali epizodu','sell')}
+    const pnl=d.pnlPercent||0;
+    const pnlCls=pnl>=0?'pos':'neg';
+    const pnlSign=pnl>=0?'+':'';
+    const startTime=d.timestamp?new Date(d.timestamp).toLocaleString('pl-PL'):'--';
+    // Build stats
+    document.getElementById('modalTitle').textContent='📜 Epizod #'+d.episode;
+    document.getElementById('modalStats').innerHTML=`
+      <div class="modal-stat"><div class="label">P&L</div><div class="value ${pnlCls}">${pnlSign}${pnl.toFixed(2)}%</div></div>
+      <div class="modal-stat"><div class="label">Trades</div><div class="value">${d.tradesCount||0}</div></div>
+      <div class="modal-stat"><div class="label">Max DD</div><div class="value neg">${(d.maxDrawdown||0).toFixed(1)}%</div></div>
+      <div class="modal-stat"><div class="label">Buy</div><div class="value buy">${d.buyCount||0}</div></div>
+      <div class="modal-stat"><div class="label">Sell</div><div class="value sell">${d.sellCount||0}</div></div>
+      <div class="modal-stat"><div class="label">Epsilon</div><div class="value">${(d.finalEpsilon||1).toFixed(3)}</div></div>
+      <div class="modal-stat"><div class="label">Steps</div><div class="value">${d.steps||0}</div></div>
+      <div class="modal-stat"><div class="label">Start Balance</div><div class="value">$${(d.startEquity||0).toFixed(2)}</div></div>
+      <div class="modal-stat"><div class="label">End Balance</div><div class="value">$${(d.endEquity||0).toFixed(2)}</div></div>
+    `;
+    // Build trades table
+    if(trades.length>0){
+      let rows=`<div class="modal-trade header"><span>#</span><span>Action</span><span>Price</span><span>P&L</span></div>`;
+      trades.forEach((t,i)=>{
+        const actionCls=t.action==='BUY'?'buy':'sell';
+        const pnl=t.pnl||0;
+        const pnlStr=pnl>=0?'+'+pnl.toFixed(2):pnl.toFixed(2);
+        rows+=`<div class="modal-trade"><span style="color:var(--text2)">${i+1}</span><span class="${actionCls}">${t.action}</span><span>$${Number(t.price).toLocaleString()}</span><span class="${pnl>=0?'pos':'neg'}">${pnlStr}</span></div>`;
+      });
+      document.getElementById('modalTrades').innerHTML=rows;
+    } else {
+      document.getElementById('modalTrades').innerHTML='<div class="empty">Brak transakcji w tym epizodzie</div>';
+    }
+    document.getElementById('episodeModal').classList.add('open');
+  } catch(e){log('Nie można wczytać detali epizodu: '+e.message,'sell')}
 }
+function closeEpisodeModal(){document.getElementById('episodeModal').classList.remove('open')}
 
 function log(msg,type='info'){
   const el=document.getElementById('logs');
@@ -560,5 +613,17 @@ updatePaper();
 
 update();
 </script>
+<div id="episodeModal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2 id="modalTitle">📜 Szczegóły epizodu</h2>
+      <button class="modal-close" onclick="closeEpisodeModal()">✕ Zamknij</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-stats" id="modalStats"></div>
+      <div class="modal-trades" id="modalTrades"></div>
+    </div>
+  </div>
+</div>
 </body>
 </html>

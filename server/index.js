@@ -145,16 +145,30 @@ async function fetchCandles(symbol = 'BTCUSDT', interval = '1m', limit = 100) {
 
 // Simple technical indicators
 function calcIndicators(candles) {
-    if (candles.length < 50) return { rsi: 50, ema9: 0, ema21: 0, macd: { value: 0, signal: 0, histogram: 0 } };
-    
+    if (candles.length < 50) return { rsi: 50, ema9: 0, ema21: 0, macd: { value: 0, signal: 0, histogram: 0 }, bb: null };
+
     const closes = candles.map(c => c.close);
     const rsi = calcRSI(closes, 14);
     const ema9 = calcEMA(closes, 9);
     const ema21 = calcEMA(closes, 21);
     const ema50 = calcEMA(closes, 50);
     const macd = calcMACD(closes);
-    
-    return { rsi, ema9, ema21, ema50, macd };
+    const bb = calcBollingerBands(closes);
+
+    return { rsi, ema9, ema21, ema50, macd, bb };
+}
+
+function calcBollingerBands(prices, period = 20, stdDev = 2) {
+    if (prices.length < period) return null;
+    const slice = prices.slice(-period);
+    const sma = slice.reduce((a, b) => a + b, 0) / period;
+    const variance = slice.reduce((sum, p) => sum + Math.pow(p - sma, 2), 0) / period;
+    const std = Math.sqrt(variance);
+    return {
+        middle: sma,
+        upper: sma + stdDev * std,
+        lower: sma - stdDev * std
+    };
 }
 
 function calcRSI(prices, period = 14) {
@@ -205,6 +219,23 @@ function paperSignal(candles, ind) {
     } else if (paperStrategy === 'macd') {
         if (ind.macd.histogram > 0.5) return 'BUY';
         if (ind.macd.histogram < -0.5) return 'SHORT';
+    } else if (paperStrategy === 'grid') {
+        // Grid trading - works in ranging markets
+        // Buy when price drops below lower grid band, sell when crosses upper band
+        // Uses Bollinger Bands as dynamic grid bands
+        if (ind.bb && candles.length >= 20) {
+            const bbLower = ind.bb.lower;
+            const bbUpper = ind.bb.upper;
+            const bbMiddle = ind.bb.middle;
+            const price = last.close;
+
+            // Price near lower band = oversold = BUY
+            if (price <= bbLower * 1.01) return 'BUY';
+            // Price near upper band = overbought = SHORT
+            if (price >= bbUpper * 0.99) return 'SHORT';
+            // Optional: close positions when price returns to middle
+            // if (price >= bbMiddle && price <= bbMiddle * 1.02) return 'CLOSE';
+        }
     }
     return 'HOLD';
 }
@@ -675,7 +706,7 @@ const server = http.createServer(async (req, res) => {
     if (url === '/api/paper-trading/strategy') {
         const params = new URL(req.url, `http://${req.headers.host}`).searchParams;
         const strategy = params.get('strategy');
-        if (strategy && ['trend', 'momentum', 'macd'].includes(strategy)) {
+        if (strategy && ['trend', 'momentum', 'macd', 'grid'].includes(strategy)) {
             paperStrategy = strategy;
             res.end(JSON.stringify({ success: true, strategy: paperStrategy }));
         } else {

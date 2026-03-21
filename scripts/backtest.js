@@ -464,4 +464,81 @@ async function backtest(episodes = 20) {
     return results;
 }
 
-backtest(30).catch(console.error);
+// Grid Strategy Backtest
+async function backtestGrid() {
+    console.log('\n🔲 GRID TRADING BACKTEST');
+    console.log('═'.repeat(50));
+    
+    const { backtestGridStrategy } = require('../src/strategies/gridStrategy');
+    
+    console.log('Pobieranie danych z Binance...');
+    const candles = await getKlines('BTCUSDT', '5m', 500);
+    console.log(`Mam ${candles.length} świec`);
+    
+    const split = Math.floor(candles.length * 0.8);
+    const testData = candles.slice(split);
+    
+    console.log(`Test na ${testData.length} świecach`);
+    console.log('─'.repeat(50));
+    
+    // Test different grid parameters
+    const testParams = [
+        { gridSize: 25, gridCount: 5, spacing: 'absolute' },
+        { gridSize: 50, gridCount: 5, spacing: 'absolute' },
+        { gridSize: 100, gridCount: 5, spacing: 'absolute' },
+        { gridSize: 1, gridCount: 5, spacing: 'percentage' },
+    ];
+    
+    console.log('\n📊 WYNIKI GRID TRADING:');
+    console.log('─'.repeat(60));
+    console.log('  Grid Size | Count | Spacing   | Balance  | P&L    | Trades | Win%');
+    console.log('─'.repeat(60));
+    
+    for (const params of testParams) {
+        const results = backtestGridStrategy(testData, {
+            ...params,
+            initialBalance: 1000
+        });
+        
+        const spacingLabel = params.spacing === 'percentage' ? `${params.gridSize}%` : `$${params.gridSize}`;
+        const pnlSign = results.totalProfit >= 0 ? '+' : '';
+        
+        console.log(
+            `  ${spacingLabel.padEnd(10)} | ${params.gridCount.toString().padEnd(5)} | ${params.spacing.padEnd(11)} | ` +
+            `$${results.finalEquity.toFixed(2).padStart(8)} | ` +
+            `${pnlSign}${results.totalProfitPct}%`.padEnd(8) + ` | ` +
+            `${results.tradesCount.toString().padEnd(6)} | ` +
+            `${results.winRate}%`
+        );
+    }
+    
+    console.log('─'.repeat(60));
+    
+    // Best params backtest
+    const bestResults = backtestGridStrategy(testData, {
+        gridSize: 50,
+        gridCount: 5,
+        spacing: 'absolute',
+        initialBalance: 1000
+    });
+    
+    console.log('\n📈 NAJLEPSZE WYNIKI (Grid $50, 5 poziomów):');
+    console.log(`  💰 Balance końcowy:     $${bestResults.finalEquity.toFixed(2)}`);
+    console.log(`  📊 P&L:                 ${bestResults.totalProfit >= 0 ? '+' : ''}${bestResults.totalProfitPct}%`);
+    console.log(`  🔄 Total trades:       ${bestResults.tradesCount}`);
+    console.log(`  ✅ Win rate:            ${bestResults.winRate}%`);
+    console.log(`  📉 Max drawdown:        ${bestResults.maxDrawdown}%`);
+    console.log(`  📐 Sharpe ratio:        ${bestResults.sharpeRatio}`);
+    console.log('─'.repeat(50));
+    
+    return bestResults;
+}
+
+// Run based on command line args
+const args = process.argv.slice(2);
+if (args.includes('--grid')) {
+    backtestGrid().catch(console.error);
+} else {
+    backtest(30).catch(console.error);
+}
+

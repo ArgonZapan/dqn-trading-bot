@@ -580,6 +580,27 @@ Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
 </div>
 </div>
 </div>
+<!-- Grid Trading Parameters (visible when grid strategy selected) -->
+<div id="gridParamsSection" style="display:none;margin-bottom:12px">
+<div style="font-size:.65rem;color:var(--text2);margin-bottom:8px;text-transform:uppercase">🔲 Grid Trading</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Grid Size</div>
+<input type="number" id="gridSize" value="50" min="1" max="10000" step="1" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+</div>
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Grid Count</div>
+<input type="number" id="gridCount" value="5" min="1" max="20" step="1" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+</div>
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Spacing</div>
+<select id="gridSpacing" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:.75rem;font-weight:600">
+<option value="absolute">$ Absolute</option>
+<option value="percentage">% Percentage</option>
+</select>
+</div>
+</div>
+</div>
 <div class="metrics-grid">
 <div class="metric-box">
 <div class="metric-label">Kapitał</div>
@@ -1297,6 +1318,11 @@ document.getElementById('paperReset').onclick=async function(){
 document.getElementById('paperStrategy').onchange=async function(){
   await fetch('/api/paper-trading/strategy?strategy='+this.value).then(x=>x.json());
   log('Strategy: '+this.value,'system');
+  // Toggle grid params visibility
+  const gridSection = document.getElementById('gridParamsSection');
+  if (gridSection) {
+    gridSection.style.display = this.value === 'grid' ? 'block' : 'none';
+  }
 };
 let sltpTimeout=null;
 async function saveSLTP(){
@@ -1310,6 +1336,23 @@ async function saveSLTP(){
 }
 document.getElementById('paperSL').onchange=saveSLTP;
 document.getElementById('paperTP').onchange=saveSLTP;
+
+// Grid params saving
+let gridParamsTimeout=null;
+async function saveGridParams(){
+  clearTimeout(gridParamsTimeout);
+  gridParamsTimeout=setTimeout(async()=>{
+    const gridSize=document.getElementById('gridSize').value;
+    const gridCount=document.getElementById('gridCount').value;
+    const gridSpacing=document.getElementById('gridSpacing').value;
+    await fetch('/api/paper-trading/grid-params?gridSize='+gridSize+'&gridCount='+gridCount+'&gridSpacing='+gridSpacing).then(x=>x.json());
+    log('Grid: size='+gridSize+' count='+gridCount+' spacing='+gridSpacing,'system');
+  },500);
+}
+document.getElementById('gridSize')?.addEventListener('change', saveGridParams);
+document.getElementById('gridCount')?.addEventListener('change', saveGridParams);
+document.getElementById('gridSpacing')?.addEventListener('change', saveGridParams);
+
 async function updatePaper(){
   try {
     const d=await fetch('/api/paper-trading').then(r=>r.json());

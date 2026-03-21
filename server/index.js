@@ -60,6 +60,18 @@ let paperPositionSize = 0.95;
 let paperLastTradeTime = 0;
 const PAPER_TRADE_COOLDOWN = 30000; // 30s between trades
 
+// Grid Trading State
+const gridStrategy = new GridStrategy();
+let gridParams = {
+    gridSize: parseFloat(process.env.GRID_SIZE) || 50,
+    gridCount: parseInt(process.env.GRID_COUNT) || 5,
+    gridSpacing: process.env.GRID_SPACING || 'absolute'
+};
+// Initialize grid params
+gridStrategy.GRID_SIZE = gridParams.gridSize;
+gridStrategy.GRID_COUNT = gridParams.gridCount;
+gridStrategy.GRID_SPACING = gridParams.gridSpacing;
+
 // Alert tracking state
 let paperLastAlertBalance = 1000;
 let paperPeakEquity = 1000;
@@ -242,6 +254,7 @@ if (!fs.existsSync(MODELS_DIR)) fs.mkdirSync(MODELS_DIR, { recursive: true });
 const Env = require('../src/environment');
 const Agent = require('../src/dqnAgent');
 const Hyperopt = require('../src/hyperopt');
+const { GridStrategy, backtestGridStrategy } = require('../src/strategies/gridStrategy');
 
 const env = new Env('BTCUSDT', 59);
 const agent = new Agent(300, 3);
@@ -404,21 +417,51 @@ function paperSignal(candles, ind, htf) {
         if (ind.macd.histogram > 0.5) return 'BUY';
         if (ind.macd.histogram < -0.5) return 'SHORT';
     } else if (paperStrategy === 'grid') {
-        // Grid trading - works in ranging markets
-        // Buy when price drops below lower grid band, sell when crosses upper band
-        // Uses Bollinger Bands as dynamic grid bands
+        // Grid Trading Strategy - true grid-based approach
+        // Generuje siatkę zleceń wokół aktualnej ceny
+        const price = last.close;
+        const hasPosition = paperTrading.positions.length > 0;
+        const entryPrice = hasPosition ? paperTrading.positions[0].entryPrice : 0;
+        
+        // Użyj GridStrategy do wygenerowania poziomów
+        const grid = gridStrategy.generateGrid(price, gridParams.gridSize, gridParams.gridCount);
+        
+        if (!hasPosition) {
+            // Nie mamy pozycji - szukamy okazji do kupna
+            // Kupujemy gdy cena zbliża się do poziomu buy
+            for (const level of grid.buy) {
+                const diff = Math.abs(price - level.price) / price;
+                if (diff <= 0.005) { // W ramach 0.5% od poziomu
+                    return 'BUY';
+                }
+            }
+        } else {
+            // Mamy pozycję - sprawdź czy sprzedać
+            // Sprzedajemy gdy cena osiąga poziom sell z zyskiem
+            for (const level of grid.sell) {
+                const diff = Math.abs(price - level.price) / price;
+                if (diff <= 0.005 && price > entryPrice) {
+                    return 'SELL';
+                }
+            }
+            
+            // Stop loss - jeśli cena spadła o 2 gridy
+            const stopPrice = entryPrice - (gridParams.gridSize * 2);
+            if (price <= stopPrice) {
+                return 'SELL';
+            }
+        }
+        
+        // Dodatkowa logika z Bollinger Bands gdy GridStrategy nie dała sygnału
         if (ind.bb && candles.length >= 20) {
             const bbLower = ind.bb.lower;
             const bbUpper = ind.bb.upper;
-            const bbMiddle = ind.bb.middle;
             const price = last.close;
-
+            
             // Price near lower band = oversold = BUY
-            if (price <= bbLower * 1.01) return 'BUY';
-            // Price near upper band = overbought = SHORT
-            if (price >= bbUpper * 0.99) return 'SHORT';
-            // Optional: close positions when price returns to middle
-            // if (price >= bbMiddle && price <= bbMiddle * 1.02) return 'CLOSE';
+            if (price <= bbLower * 1.01 && !hasPosition) return 'BUY';
+            // Price near upper band = overbought = SELL  
+            if (price >= bbUpper * 0.99 && hasPosition) return 'SELL';
         }
     } else if (paperStrategy === 'scalping') {
         // Scalping: fast EMA crossover + RSI + volume confirmation + HTF trend filter
@@ -1021,6 +1064,34 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({
             stopLoss: paperTrading.stopLoss,
             takeProfit: paperTrading.takeProfit
+        }));
+        return;
+    }
+
+    // Grid params API
+    if (url === '/api/paper-trading/grid-params') {
+        const params = new URL(req.url, `http://${req.headers.host}`).searchParams;
+        const gs = parseFloat(params.get('gridSize'));
+        const gc = parseInt(params.get('gridCount'));
+        const gsp = params.get('gridSpacing');
+        
+        if (!isNaN(gs) && gs > 0) {
+            gridParams.gridSize = gs;
+            gridStrategy.GRID_SIZE = gs;
+        }
+        if (!isNaN(gc) && gc > 0 && gc <= 20) {
+            gridParams.gridCount = gc;
+            gridStrategy.GRID_COUNT = gc;
+        }
+        if (gsp === 'percentage' || gsp === 'absolute') {
+            gridParams.gridSpacing = gsp;
+            gridStrategy.GRID_SPACING = gsp;
+        }
+        
+        res.end(JSON.stringify({
+            gridSize: gridParams.gridSize,
+            gridCount: gridParams.gridCount,
+            gridSpacing: gridParams.gridSpacing
         }));
         return;
     }

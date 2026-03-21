@@ -392,27 +392,6 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <div style="font-size:.65rem;color:var(--text2);margin-bottom:8px;text-transform:uppercase">Equity Curve</div>
 <div style="position:relative;height:120px">
 <canvas id="paperEquityChart"></canvas>
-<!-- Alert Configuration Card -->
-<div class="card" style="margin-top:16px">
-<div class="card-header">🔔 Alert Configuration</div>
-<div class="card-body">
-<div id="alerterStatus" style="margin-bottom:12px;font-size:.7rem;color:var(--text2)">
-<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-<span id="alerterEmailDot" style="width:8px;height:8px;border-radius:50%;background:var(--text2);display:inline-block"></span>
-<span>Email: <span id="alerterEmailStatus">Not configured</span></span>
-</div>
-<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-<span id="alerterTgDot" style="width:8px;height:8px;border-radius:50%;background:var(--text2);display:inline-block"></span>
-<span>Telegram: <span id="alerterTgStatus">Not configured</span></span>
-</div>
-</div>
-<div style="display:flex;gap:8px">
-<button class="btn" id="alerterTestBtn" onclick="testAlerter()" style="background:linear-gradient(135deg,#f0883e,#b35900);font-size:.7rem;padding:10px 12px">🧪 TEST</button>
-<button class="btn" onclick="refreshAlerterStatus()" style="background:linear-gradient(135deg,#6366f1,#4f46e5);font-size:.7rem;padding:10px 12px">🔄 REFRESH</button>
-</div>
-<div id="alerterResult" style="margin-top:8px;font-size:.65rem;color:var(--text2)"></div>
-</div>
-</div>
 </div>
 </div>
 </div>
@@ -1047,66 +1026,6 @@ async function togglePaperEquity() {
   section.style.display = paperEquityVisible ? 'block' : 'none';
   if (paperEquityVisible) {
     await initPaperEquityChart();
-
-// Alerter status functions
-async function refreshAlerterStatus() {
-  try {
-    const d = await fetch('/api/alerter/status').then(r => r.json());
-    const emailDot = document.getElementById('alerterEmailDot');
-    const tgDot = document.getElementById('alerterTgDot');
-    const emailStatus = document.getElementById('alerterEmailStatus');
-    const tgStatus = document.getElementById('alerterTgStatus');
-    if (d.emailEnabled) {
-      emailDot.style.background = 'var(--green)';
-      emailStatus.textContent = d.alertEmail || 'Configured';
-      emailStatus.style.color = 'var(--green)';
-    } else {
-      emailDot.style.background = 'var(--text2)';
-      emailStatus.textContent = 'Not configured';
-      emailStatus.style.color = '';
-    }
-    if (d.telegramFallback) {
-      tgDot.style.background = 'var(--green)';
-      tgStatus.textContent = 'Configured';
-      tgStatus.style.color = 'var(--green)';
-    } else {
-      tgDot.style.background = 'var(--text2)';
-      tgStatus.textContent = 'Not configured';
-      tgStatus.style.color = '';
-    }
-  } catch(e) {
-    document.getElementById('alerterEmailStatus').textContent = 'Error';
-    document.getElementById('alerterTgStatus').textContent = 'Error';
-  }
-}
-
-async function testAlerter() {
-  const btn = document.getElementById('alerterTestBtn');
-  const result = document.getElementById('alerterResult');
-  btn.disabled = true;
-  btn.textContent = '...';
-  result.textContent = '';
-  try {
-    const r = await fetch('/api/alerter/test').then(x => x.json());
-    if (r.success) {
-      result.textContent = '✅ Test sent!';
-      result.style.color = 'var(--green)';
-    } else {
-      result.textContent = '❌ ' + (r.message || 'Not configured');
-      result.style.color = 'var(--red)';
-    }
-  } catch(e) {
-    result.textContent = '❌ Error: ' + e.message;
-    result.style.color = 'var(--red)';
-  }
-  btn.disabled = false;
-  btn.textContent = '🧪 TEST';
-  setTimeout(() => { result.textContent = ''; }, 5000);
-}
-
-// Auto-refresh alerter status every 30s
-setInterval(refreshAlerterStatus, 30000);
-refreshAlerterStatus();
     await updatePaperEquity();
   }
 }

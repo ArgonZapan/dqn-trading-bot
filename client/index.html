@@ -136,8 +136,57 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
   /* History rows */
   .history-row{flex-wrap:wrap;gap:4px;padding:10px 12px}
   .history-row .stats{width:100%;order:3;margin-top:4px}
-  /* Bottom Navigation */
-  .bottom-nav{display:flex!important}
+}
+
+/* ========== STICKY BOTTOM NAVIGATION ========== */
+.bottom-nav {
+  display: none !important;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 999;
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  padding: 0;
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.4);
+}
+
+.bottom-nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 4px;
+  background: none;
+  border: none;
+  color: var(--text2);
+  font-size: .6rem;
+  cursor: pointer;
+  transition: color .2s;
+  min-height: 56px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.bottom-nav-item svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.8;
+}
+
+.bottom-nav-item.active {
+  color: var(--blue);
+}
+
+.bottom-nav-item:active {
+  background: rgba(88,166,255,0.1);
+}
+
+.bottom-nav-item:focus {
+  outline: none;
 }
 
 /* ========== TOUCH-FRIENDLY IMPROVEMENTS ========== */
@@ -154,11 +203,6 @@ button, .bottom-nav-item, .history-row, .card-header {
 .main, .logs, .modal-body, #paperHistorySection {
   -webkit-overflow-scrolling: touch;
   overflow-y: auto;
-}
-
-.bottom-nav-item:focus, .btn:focus {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
 }
 
 canvas {

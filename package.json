@@ -1,25 +1,12 @@
 {
-  "name": "dqn-trading",
+  "name": "dqn-trading-bot",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Autonomous DQN trading bot for Binance",
+  "main": "server/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server/index.js",
+    "train": "node scripts/train.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "@tensorflow/tfjs-node": "^4.22.0",
-    "@types/node": "^25.5.0",
-    "binance": "^3.5.1",
-    "cors": "^2.8.6",
-    "dotenv": "^17.3.1",
-    "express": "^5.2.1",
-    "helmet": "^8.1.0",
-    "socket.io": "^4.8.3",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
-  }
+  "keywords": ["trading", "dqn", "binance", "crypto"],
+  "license": "MIT"
 }

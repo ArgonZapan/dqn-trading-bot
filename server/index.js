@@ -174,11 +174,11 @@ async function trainingStep() {
     const action = agent.act(state);
     
     // Execute action in environment
-    const prevBalance = env.getBalance().total;
-    const { state: newState, reward, done } = env.step(action);
+    const { reward, done } = env.execute(action);
+    const newState = env.getState();
     
     // Check for trade execution (BUY or SELL)
-    const tradesAfter = env.getTrades();
+    const tradesAfter = env.trades;
     if (tradesAfter.length > episodeTrades.length) {
         const newTrade = tradesAfter[tradesAfter.length - 1];
         episodeTrades.push({
@@ -191,18 +191,15 @@ async function trainingStep() {
     }
     
     // Calculate equity
-    const currentBalance = env.getBalance().total;
+    const currentBalance = env.capital;
     episodeEquity.push({
         step: metrics.steps,
         equity: currentBalance,
         drawdown: ((episodeStartBalance - currentBalance) / episodeStartBalance) * 100
     });
     
-    // Reward based on balance change
-    const balanceReward = (currentBalance - prevBalance) / prevBalance;
-    const totalReward = reward + balanceReward * 0.1;
-    
-    agent.remember(state, action, totalReward, newState, done);
+    // Store experience
+    agent.remember(state, action, reward, newState, done);
     
     // Train
     const loss = await agent.replay();
@@ -220,7 +217,7 @@ async function trainingStep() {
         currentEpisodeSteps = [];
         episodeEpsilons = [];
         episodeEquity = [];
-        episodeStartBalance = env.getBalance().total;
+        episodeStartBalance = env.capital;
     }
     
     metrics.bufferSize = agent.buffer.length;

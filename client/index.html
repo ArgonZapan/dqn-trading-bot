@@ -210,6 +210,9 @@ input[type="number"], input[type="text"], select {
   #trainingTimer{font-size:1.5rem}
   /* Paper trading very small */
   .paper-stats-grid{grid-template-columns:1fr 1fr;gap:6px}
+  /* Live trading mobile */
+  #liveTradingCard .card-body{padding:12px}
+  #livePositionSection .card-body{padding:10px}
   /* Modal adjustments */
   .modal-header{padding:14px 16px}
   .modal-body{padding:16px}
@@ -493,6 +496,92 @@ input[type="number"], input[type="text"], select {
 <div style="font-size:.65rem;color:var(--text2);margin-bottom:8px;text-transform:uppercase">Equity Curve</div>
 <div style="position:relative;height:120px">
 <canvas id="paperEquityChart"></canvas>
+<!-- Live Trading Card -->
+<div class="card" style="margin-top:16px" id="liveTradingCard">
+<div class="card-header">🚀 Live Trading <span id="liveModeBadge" style="display:none;background:linear-gradient(135deg,#f85149,#da3633);color:#fff;font-size:.5rem;font-weight:700;padding:2px 6px;border-radius:6px;text-transform:uppercase;margin-left:6px">⚠️ REAL</span><span id="liveTestBadge" style="display:none;background:linear-gradient(135deg,#f0883e,#b35900);color:#fff;font-size:.5rem;font-weight:700;padding:2px 6px;border-radius:6px;text-transform:uppercase;margin-left:6px">🧪 TEST</span></div>
+<div class="card-body">
+<div id="liveTradingNotConfigured" style="text-align:center;padding:20px 0;color:var(--text2)">
+<div style="font-size:1.5rem;margin-bottom:8px">🔐</div>
+<div style="font-size:.75rem">API keys not configured</div>
+<div style="font-size:.65rem;margin-top:4px">Add BINANCE_API_KEY and BINANCE_API_SECRET to .env</div>
+</div>
+<div id="liveTradingPanel" style="display:none">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+<div style="font-size:.75rem;color:var(--text2)">Enable Live Trading</div>
+<label class="switch">
+<input type="checkbox" id="liveToggle">
+<span class="slider"></span>
+</label>
+</div>
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:.7rem">
+<div id="liveModeIndicator" style="padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text2)">Mode: <span id="liveModeText">Test</span></div>
+<div id="liveSymbolBadge" style="padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--orange);font-weight:600">BTCUSDT</div>
+<div id="livePriceBadge" style="padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--blue)">$<span id="liveCurrentPrice">--</span></div>
+</div>
+<div id="livePositionSection" style="display:none;margin-bottom:12px">
+<div style="background:var(--bg);border-radius:10px;padding:12px;border:1px solid var(--border)">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+<div style="font-size:.7rem;text-transform:uppercase;color:var(--text2)">Active Position</div>
+<span id="livePositionSide" style="font-size:.75rem;font-weight:700;padding:3px 8px;border-radius:6px"></span>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+<div><div style="font-size:.6rem;color:var(--text2)">Entry</div><div style="font-size:.85rem;font-weight:600" id="liveEntryPrice">--</div></div>
+<div><div style="font-size:.6rem;color:var(--text2)">Current</div><div style="font-size:.85rem;font-weight:600" id="liveCurrentPrice2">--</div></div>
+<div><div style="font-size:.6rem;color:var(--text2)">P&L</div><div style="font-size:.85rem;font-weight:600" id="livePositionPnl">--</div></div>
+<div><div style="font-size:.6rem;color:var(--text2)">P&L %</div><div style="font-size:.85rem;font-weight:600" id="livePositionPnlPct">--</div></div>
+<div><div style="font-size:.6rem;color:var(--text2)">Stop Loss</div><div style="font-size:.85rem;font-weight:600;color:var(--red)" id="liveStopLoss">--</div></div>
+<div><div style="font-size:.6rem;color:var(--text2)">Take Profit</div><div style="font-size:.85rem;font-weight:600;color:var(--green)" id="liveTakeProfit">--</div></div>
+</div>
+<div style="display:flex;gap:8px;margin-top:10px">
+<button class="btn" id="liveClosePositionBtn" onclick="liveClosePosition()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,var(--red),#da3633)">❌ CLOSE POSITION</button>
+</div>
+</div>
+</div>
+<div id="liveNoPosition" style="text-align:center;padding:16px 0;color:var(--text2);font-size:.7rem;margin-bottom:12px">
+No active position
+</div>
+<div style="display:flex;gap:8px;margin-bottom:12px">
+<button class="btn" id="liveOpenLongBtn" onclick="liveOpenLong()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,var(--green),#2ea043)">📈 LONG</button>
+<button class="btn" id="liveOpenShortBtn" onclick="liveOpenShort()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,var(--red),#da3633)">📉 SHORT</button>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Position Size</div>
+<input type="number" id="livePositionSize" value="95" min="1" max="100" step="1" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+</div>
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">SL %</div>
+<input type="number" id="liveSL" value="2.0" min="0.1" max="50" step="0.1" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--red);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+</div>
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">TP %</div>
+<input type="number" id="liveTP" value="4.0" min="0.1" max="100" step="0.1" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--green);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+</div>
+</div>
+<div class="metrics-grid">
+<div class="metric-box">
+<div class="metric-label">Equity</div>
+<div class="metric-value" id="liveEquity">$0</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Trades</div>
+<div class="metric-value" id="liveTrades">0</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Win Rate</div>
+<div class="metric-value green" id="liveWinRate">0%</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">P&L</div>
+<div class="metric-value" id="livePnl">$0</div>
+</div>
+</div>
+<button class="btn" id="liveResetBtn" onclick="liveReset()" style="font-size:.7rem;padding:8px 12px;margin-top:8px;background:linear-gradient(135deg,var(--orange),#b35900)">🔄 RESET ACCOUNT</button>
+<div id="liveStatus" style="margin-top:8px;font-size:.65rem;color:var(--text2)">Status: Stopped</div>
+</div>
+</div>
+</div>
+
 <!-- Alert Configuration Card -->
 <div class="card" style="margin-top:16px">
 <div class="card-header">🔔 Alert Configuration</div>
@@ -1148,6 +1237,211 @@ async function togglePaperEquity() {
   section.style.display = paperEquityVisible ? 'block' : 'none';
   if (paperEquityVisible) {
     await initPaperEquityChart();
+    await updatePaperEquity();
+  }
+}
+
+// ========== LIVE TRADING ==========
+let liveActive = false;
+
+async function checkLiveConfig() {
+  try {
+    const r = await fetch('/api/live-trading/config-check').then(x => x.json());
+    const panel = document.getElementById('liveTradingPanel');
+    const notConfigured = document.getElementById('liveTradingNotConfigured');
+    if (r.configured) {
+      panel.style.display = 'block';
+      notConfigured.style.display = 'none';
+    } else {
+      panel.style.display = 'none';
+      notConfigured.style.display = 'block';
+    }
+  } catch(e) {}
+}
+
+async function updateLiveTrading() {
+  try {
+    const status = await fetch('/api/live-trading/status').then(x => x.json());
+    const stats = await fetch('/api/live-trading/stats').then(x => x.json());
+    
+    // Mode badges
+    const testBadge = document.getElementById('liveTestBadge');
+    const realBadge = document.getElementById('liveModeBadge');
+    if (status.enabled) {
+      if (status.testMode) {
+        testBadge.style.display = 'inline-block';
+        realBadge.style.display = 'none';
+      } else {
+        realBadge.style.display = 'inline-block';
+        testBadge.style.display = 'none';
+      }
+    } else {
+      testBadge.style.display = 'none';
+      realBadge.style.display = 'none';
+    }
+    
+    // Mode indicator
+    document.getElementById('liveModeText').textContent = status.testMode ? 'Test' : 'REAL';
+    document.getElementById('liveSymbolBadge').textContent = status.symbol || 'BTCUSDT';
+    document.getElementById('liveCurrentPrice').textContent = status.currentPrice ? status.currentPrice.toLocaleString() : '--';
+    document.getElementById('liveCurrentPrice2').textContent = status.currentPrice ? '$' + status.currentPrice.toLocaleString() : '--';
+    
+    // Toggle state
+    const toggle = document.getElementById('liveToggle');
+    if (toggle) toggle.checked = status.enabled || false;
+    liveActive = status.enabled || false;
+    
+    // Position section
+    const posSection = document.getElementById('livePositionSection');
+    const noPosition = document.getElementById('liveNoPosition');
+    const positions = status.positions || [];
+    
+    if (positions.length > 0) {
+      const pos = positions[0];
+      posSection.style.display = 'block';
+      noPosition.style.display = 'none';
+      
+      const sideEl = document.getElementById('livePositionSide');
+      sideEl.textContent = pos.side;
+      if (pos.side === 'LONG') {
+        sideEl.style.background = 'rgba(63,185,80,.2)';
+        sideEl.style.color = 'var(--green)';
+      } else {
+        sideEl.style.background = 'rgba(248,81,73,.2)';
+        sideEl.style.color = 'var(--red)';
+      }
+      
+      document.getElementById('liveEntryPrice').textContent = '$' + (pos.entryPrice || 0).toLocaleString();
+      
+      const pnl = pos.pnl || 0;
+      const pnlPct = pos.pnlPercent || 0;
+      const pnlEl = document.getElementById('livePositionPnl');
+      pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
+      pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      
+      const pnlPctEl = document.getElementById('livePositionPnlPct');
+      pnlPctEl.textContent = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+      pnlPctEl.style.color = pnlPct >= 0 ? 'var(--green)' : 'var(--red)';
+      
+      document.getElementById('liveStopLoss').textContent = '$' + (pos.stopLoss || 0).toLocaleString();
+      document.getElementById('liveTakeProfit').textContent = '$' + (pos.takeProfit || 0).toLocaleString();
+    } else {
+      posSection.style.display = 'none';
+      noPosition.style.display = 'block';
+    }
+    
+    // Stats
+    const s = stats.stats || {};
+    document.getElementById('liveEquity').textContent = '$' + (status.equity || 0).toFixed(2);
+    document.getElementById('liveTrades').textContent = s.totalTrades || 0;
+    document.getElementById('liveWinRate').textContent = (s.winRate || 0).toFixed(1) + '%';
+    const pnl = s.totalPnl || 0;
+    const pnlEl = document.getElementById('livePnl');
+    pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
+    pnlEl.className = pnl >= 0 ? 'metric-value green' : 'metric-value red';
+    
+    // Status
+    document.getElementById('liveStatus').textContent = 'Status: ' + (status.enabled ? (status.testMode ? 'Test Mode Running' : 'REAL MONEY MODE') : 'Stopped');
+    
+    // Config inputs
+    if (status.stopLossPct) document.getElementById('liveSL').value = status.stopLossPct;
+    if (status.takeProfitPct) document.getElementById('liveTP').value = status.takeProfitPct;
+    if (status.positionSize) document.getElementById('livePositionSize').value = Math.round((status.positionSize || 0.95) * 100);
+    
+  } catch(e) { console.error('updateLiveTrading:', e); }
+}
+
+async function liveStart(testMode = true) {
+  try {
+    const r = await fetch('/api/live-trading/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ testMode })
+    }).then(x => x.json());
+    if (r.success) {
+      liveActive = true;
+      log('Live Trading STARTED (' + (testMode ? 'TEST' : 'REAL') + ')', 'system');
+    } else {
+      log('Live Trading error: ' + (r.error || 'Unknown'), 'system');
+    }
+    await updateLiveTrading();
+  } catch(e) { log('Live start error: ' + e.message, 'system'); }
+}
+
+async function liveStop() {
+  try {
+    await fetch('/api/live-trading/stop', { method: 'POST' }).then(x => x.json());
+    liveActive = false;
+    log('Live Trading STOPPED', 'system');
+    await updateLiveTrading();
+  } catch(e) {}
+}
+
+async function liveOpenLong() {
+  try {
+    const r = await fetch('/api/live-trading/open-long', { method: 'POST' }).then(x => x.json());
+    if (r.success) log('LONG opened @ $' + (r.position?.entryPrice || 0).toLocaleString(), 'buy');
+    else log('Open LONG failed: ' + (r.error || ''), 'system');
+    await updateLiveTrading();
+  } catch(e) {}
+}
+
+async function liveOpenShort() {
+  try {
+    const r = await fetch('/api/live-trading/open-short', { method: 'POST' }).then(x => x.json());
+    if (r.success) log('SHORT opened @ $' + (r.position?.entryPrice || 0).toLocaleString(), 'sell');
+    else log('Open SHORT failed: ' + (r.error || ''), 'system');
+    await updateLiveTrading();
+  } catch(e) {}
+}
+
+async function liveClosePosition() {
+  try {
+    const r = await fetch('/api/live-trading/close-long', { method: 'POST' }).then(x => x.json());
+    if (r.success) log('Position closed: ' + (r.trade?.pnl >= 0 ? '+' : '') + '$' + (r.trade?.pnl || 0).toFixed(2), r.trade?.pnl >= 0 ? 'buy' : 'sell');
+    else log('Close position failed: ' + (r.error || ''), 'system');
+    await updateLiveTrading();
+  } catch(e) {}
+}
+
+async function liveReset() {
+  if (!confirm('Reset live trading account? This will clear all history.')) return;
+  try {
+    await fetch('/api/live-trading/reset', { method: 'POST' }).then(x => x.json());
+    log('Live Trading RESET', 'system');
+    await updateLiveTrading();
+  } catch(e) {}
+}
+
+document.getElementById('liveToggle')?.addEventListener('change', async function() {
+  if (this.checked) {
+    await liveStart(true); // Default to test mode
+  } else {
+    await liveStop();
+  }
+});
+
+let liveConfigTimeout = null;
+async function saveLiveConfig() {
+  clearTimeout(liveConfigTimeout);
+  liveConfigTimeout = setTimeout(async () => {
+    const sl = document.getElementById('liveSL')?.value;
+    const tp = document.getElementById('liveTP')?.value;
+    const size = document.getElementById('livePositionSize')?.value;
+    try {
+      await fetch('/api/live-trading/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stopLoss: sl, takeProfit: tp, positionSize: size / 100 })
+      }).then(x => x.json());
+      log('Live config: SL=' + sl + '% | TP=' + tp + '% | Size=' + size + '%', 'system');
+    } catch(e) {}
+  }, 500);
+}
+
+document.getElementById('liveSL')?.addEventListener('change', saveLiveConfig);
+document.getElementById('liveTP')?.addEventListener('change', saveLiveConfig);
+document.getElementById('livePositionSize')?.addEventListener('change', saveLiveConfig);
 
 // Alerter status functions
 async function refreshAlerterStatus() {
@@ -1219,8 +1513,11 @@ setInterval(()=>{if(paperHistoryVisible)loadPaperHistory();},5000);
 setInterval(updatePaper,3000);
 setInterval(update,2000);
 setInterval(updatePaperEquity,3000);
+setInterval(updateLiveTrading, 3000);
 update();
 updatePaper();
+checkLiveConfig();
+updateLiveTrading();
 
 update();
 </script>

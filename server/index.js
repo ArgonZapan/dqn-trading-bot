@@ -557,21 +557,72 @@ async function paperTradingStep() {
     const ind = calcIndicators(candles);
     const signal = paperSignal(candles, ind, htfState);
     
-    // Update unrealized P&L and check SL/TP
+    // Update unrealized P&L and check SL/TP + Trailing Stop
     let slTpTriggered = false;
     let slTpReason = '';
+    const TRAILING_ACTIVATION = 1.0; // % profit before trailing activates
+    const TRAILING_DISTANCE = 0.75; // % below peak price for trailing SL
+
     if (paperOpenPosition) {
         const pnl = paperOpenPosition.side === 'LONG'
             ? (currentPrice - paperOpenPosition.entryPrice) * paperOpenPosition.quantity
             : (paperOpenPosition.entryPrice - currentPrice) * paperOpenPosition.quantity;
         paperOpenPosition.pnl = pnl;
-        paperOpenPosition.pnlPct = ((currentPrice - paperOpenPosition.entryPrice) / paperOpenPosition.entryPrice) * 100;
+        paperOpenPosition.pnlPct = paperOpenPosition.side === 'LONG'
+            ? ((currentPrice - paperOpenPosition.entryPrice) / paperOpenPosition.entryPrice) * 100
+            : ((paperOpenPosition.entryPrice - currentPrice) / paperOpenPosition.entryPrice) * 100;
+
+        // ── Trailing Stop Logic ──────────────────────────────────────────────
+        let trailingActive = false;
+        if (!paperOpenPosition.peakPrice) paperOpenPosition.peakPrice = paperOpenPosition.entryPrice;
+
+        if (paperOpenPosition.side === 'LONG') {
+            if (currentPrice > paperOpenPosition.peakPrice) {
+                paperOpenPosition.peakPrice = currentPrice;
+            }
+            const profitPct = ((currentPrice - paperOpenPosition.entryPrice) / paperOpenPosition.entryPrice) * 100;
+            if (profitPct >= TRAILING_ACTIVATION) {
+                trailingActive = true;
+                // Trail stop: keep SL at the greater of (static SL, peak - trail distance)
+                const staticSL = paperOpenPosition.entryPrice * (1 - paperTrading.stopLoss / 100);
+                const trailSL = paperOpenPosition.peakPrice * (1 - TRAILING_DISTANCE / 100);
+                paperOpenPosition.trailingStop = Math.max(staticSL, trailSL);
+                // Only update SL if new trailing SL is higher than current (for LONG, SL rises)
+                if (paperOpenPosition.trailingStop > paperOpenPosition.stopLoss) {
+                    const prevSL = paperOpenPosition.stopLoss;
+                    paperOpenPosition.stopLoss = paperOpenPosition.trailingStop;
+                    if (prevSL !== paperOpenPosition.trailingStop) {
+                        paperLog(`📍 TRAIL SL updated: $${prevSL.toFixed(2)} → $${paperOpenPosition.trailingStop.toFixed(2)} (peak: $${paperOpenPosition.peakPrice.toFixed(2)})`);
+                    }
+                }
+            }
+        } else if (paperOpenPosition.side === 'SHORT') {
+            if (currentPrice < paperOpenPosition.peakPrice || paperOpenPosition.peakPrice === paperOpenPosition.entryPrice) {
+                paperOpenPosition.peakPrice = currentPrice;
+            }
+            const profitPct = ((paperOpenPosition.entryPrice - currentPrice) / paperOpenPosition.entryPrice) * 100;
+            if (profitPct >= TRAILING_ACTIVATION) {
+                trailingActive = true;
+                const staticSL = paperOpenPosition.entryPrice * (1 + paperTrading.stopLoss / 100);
+                const trailSL = paperOpenPosition.peakPrice * (1 + TRAILING_DISTANCE / 100);
+                paperOpenPosition.trailingStop = Math.min(staticSL, trailSL);
+                // For SHORT, SL decreases (moves lower toward entry)
+                if (paperOpenPosition.trailingStop < paperOpenPosition.stopLoss) {
+                    const prevSL = paperOpenPosition.stopLoss;
+                    paperOpenPosition.stopLoss = paperOpenPosition.trailingStop;
+                    if (prevSL !== paperOpenPosition.trailingStop) {
+                        paperLog(`📍 TRAIL SL updated: $${prevSL.toFixed(2)} → $${paperOpenPosition.trailingStop.toFixed(2)} (trough: $${paperOpenPosition.peakPrice.toFixed(2)})`);
+                    }
+                }
+            }
+        }
+        paperOpenPosition.trailingActive = trailingActive;
 
         // Check Stop Loss / Take Profit
         if (paperOpenPosition.side === 'LONG') {
             if (currentPrice <= paperOpenPosition.stopLoss) {
                 slTpTriggered = true;
-                slTpReason = 'SL';
+                slTpReason = trailingActive ? 'TSL' : 'SL'; // TSL = Trailing Stop Loss
             } else if (currentPrice >= paperOpenPosition.takeProfit) {
                 slTpTriggered = true;
                 slTpReason = 'TP';
@@ -579,7 +630,7 @@ async function paperTradingStep() {
         } else if (paperOpenPosition.side === 'SHORT') {
             if (currentPrice >= paperOpenPosition.stopLoss) {
                 slTpTriggered = true;
-                slTpReason = 'SL';
+                slTpReason = trailingActive ? 'TSL' : 'SL';
             } else if (currentPrice <= paperOpenPosition.takeProfit) {
                 slTpTriggered = true;
                 slTpReason = 'TP';
@@ -783,7 +834,9 @@ const server = http.createServer(async (req, res) => {
             positions: paperTrading.positions,
             stats: paperTrading.stats,
             stopLoss: paperTrading.stopLoss,
-            takeProfit: paperTrading.takeProfit
+            takeProfit: paperTrading.takeProfit,
+            trailingActivation: TRAILING_ACTIVATION,
+            trailingDistance: TRAILING_DISTANCE
         }));
         return;
     }

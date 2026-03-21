@@ -1360,6 +1360,8 @@ const server = http.createServer(async (req, res) => {
                 const data = JSON.parse(body || '{}');
                 if (data.stopLoss) lt.setStopLoss(parseFloat(data.stopLoss));
                 if (data.takeProfit) lt.setTakeProfit(parseFloat(data.takeProfit));
+                if (data.trailingActivation) lt.setTrailingActivation(parseFloat(data.trailingActivation));
+                if (data.trailingDistance) lt.setTrailingDistance(parseFloat(data.trailingDistance));
                 if (data.positionSize) lt.setPositionSize(parseFloat(data.positionSize));
                 if (data.symbol) lt.setSymbol(data.symbol);
                 res.end(JSON.stringify({ success: true, status: lt.getStatus() }));

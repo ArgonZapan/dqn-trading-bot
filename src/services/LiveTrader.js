@@ -42,6 +42,8 @@ class LiveTrader {
     this.positionSize = 0.95;
     this.stopLossPercent = 2.0;
     this.takeProfitPercent = 4.0;
+    this.trailingActivation = 1.0;  // % profit before trailing activates
+    this.trailingDistance = 0.75;     // % below peak (LONG) / above trough (SHORT)
     this.testMode = true;
 
     this.enabled = false;
@@ -70,6 +72,8 @@ class LiveTrader {
     if (config.positionSize) this.positionSize = config.positionSize;
     if (config.stopLossPercent) this.stopLossPercent = config.stopLossPercent;
     if (config.takeProfitPercent) this.takeProfitPercent = config.takeProfitPercent;
+    if (config.trailingActivation) this.trailingActivation = config.trailingActivation;
+    if (config.trailingDistance) this.trailingDistance = config.trailingDistance;
     if (config.testMode !== undefined) this.testMode = config.testMode;
   }
 
@@ -82,6 +86,8 @@ class LiveTrader {
   setSymbol(symbol) { this.symbol = symbol; }
   setStopLoss(percent) { this.stopLossPercent = Math.max(0.1, Math.min(50, percent)); }
   setTakeProfit(percent) { this.takeProfitPercent = Math.max(0.1, Math.min(100, percent)); }
+  setTrailingActivation(pct) { this.trailingActivation = Math.max(0.1, Math.min(20, pct)); }
+  setTrailingDistance(pct) { this.trailingDistance = Math.max(0.1, Math.min(10, pct)); }
   setPositionSize(size) { this.positionSize = Math.max(0.01, Math.min(1.0, size)); }
 
   onPrice(cb) {
@@ -233,7 +239,10 @@ class LiveTrader {
       orderId: trade.orderId,
       slOrderId: 0,
       tpOrderId: 0,
-      entryTime: Date.now()
+      entryTime: Date.now(),
+      peakPrice: this.currentPrice,
+      trailingStop: sl,
+      trailingActive: false
     };
 
     if (!this.testMode) {
@@ -287,7 +296,10 @@ class LiveTrader {
       orderId: trade.orderId,
       slOrderId: 0,
       tpOrderId: 0,
-      entryTime: Date.now()
+      entryTime: Date.now(),
+      peakPrice: this.currentPrice,
+      trailingStop: sl,
+      trailingActive: false
     };
 
     this.positions.set('SHORT', position);
@@ -404,7 +416,10 @@ class LiveTrader {
       entryPrice,
       stopLoss: entryPrice * (1 + this.stopLossPercent / 100),
       takeProfit: entryPrice * (1 - this.takeProfitPercent / 100),
-      orderId: 0, slOrderId: 0, tpOrderId: 0, entryTime: Date.now()
+      orderId: 0, slOrderId: 0, tpOrderId: 0, entryTime: Date.now(),
+      peakPrice: entryPrice,
+      trailingStop: entryPrice * (1 + this.stopLossPercent / 100),
+      trailingActive: false
     };
     this.positions.set('SHORT', position);
     return position;
@@ -430,13 +445,77 @@ class LiveTrader {
   async checkAndExecuteSLTP() {
     if (!this.enabled || !this.currentPrice) return;
     for (const [, pos] of this.positions) {
+      // ── Trailing Stop Logic ──────────────────────────────────────────────
+      if (!pos.peakPrice) pos.peakPrice = pos.entryPrice;
+
+      if (pos.side === 'LONG') {
+        // Update peak price when price goes up
+        if (this.currentPrice > pos.peakPrice) {
+          pos.peakPrice = this.currentPrice;
+        }
+        const profitPct = ((this.currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+        if (profitPct >= this.trailingActivation) {
+          pos.trailingActive = true;
+          // Trail stop: greater of (static SL, peak - trail distance)
+          const staticSL = pos.entryPrice * (1 - this.stopLossPercent / 100);
+          const trailSL = pos.peakPrice * (1 - this.trailingDistance / 100);
+          const newTrailingStop = Math.max(staticSL, trailSL);
+          // For LONG, trailing stop only moves UP (in price)
+          if (newTrailingStop > pos.trailingStop) {
+            const prevSL = pos.trailingStop;
+            pos.trailingStop = newTrailingStop;
+            // In live mode, cancel old SL order and place new one
+            if (!this.testMode && pos.slOrderId) {
+              await this.cancelOrder(pos.slOrderId);
+              const newSLOrder = await this.placeStopLoss('LONG', pos.quantity, pos.trailingStop);
+              pos.slOrderId = newSLOrder?.orderId || 0;
+            }
+            console.log(`📍 TRAIL SL updated: $${prevSL.toFixed(2)} → $${pos.trailingStop.toFixed(2)} (peak: $${pos.peakPrice.toFixed(2)})`);
+          }
+        }
+      } else if (pos.side === 'SHORT') {
+        // Update peak (trough) price when price goes down
+        if (this.currentPrice < pos.peakPrice || pos.peakPrice === pos.entryPrice) {
+          pos.peakPrice = this.currentPrice;
+        }
+        const profitPct = ((pos.entryPrice - this.currentPrice) / pos.entryPrice) * 100;
+        if (profitPct >= this.trailingActivation) {
+          pos.trailingActive = true;
+          // Trail stop: lesser of (static SL, trough + trail distance)
+          const staticSL = pos.entryPrice * (1 + this.stopLossPercent / 100);
+          const trailSL = pos.peakPrice * (1 + this.trailingDistance / 100);
+          const newTrailingStop = Math.min(staticSL, trailSL);
+          // For SHORT, trailing stop only moves DOWN (in price)
+          if (newTrailingStop < pos.trailingStop) {
+            const prevSL = pos.trailingStop;
+            pos.trailingStop = newTrailingStop;
+            // In live mode, cancel old SL order and place new one
+            if (!this.testMode && pos.slOrderId) {
+              await this.cancelOrder(pos.slOrderId);
+              const newSLOrder = await this.placeStopLoss('SHORT', pos.quantity, pos.trailingStop);
+              pos.slOrderId = newSLOrder?.orderId || 0;
+            }
+            console.log(`📍 TRAIL SL updated: $${prevSL.toFixed(2)} → $${pos.trailingStop.toFixed(2)} (trough: $${pos.peakPrice.toFixed(2)})`);
+          }
+        }
+      }
+
+      // ── SL/TP Trigger Check ───────────────────────────────────────────────
       let triggered = false, reason = '';
       if (pos.side === 'LONG') {
-        if (this.currentPrice <= pos.stopLoss) { triggered = true; reason = 'SL'; }
-        else if (this.currentPrice >= pos.takeProfit) { triggered = true; reason = 'TP'; }
+        if (pos.trailingActive && this.currentPrice <= pos.trailingStop) {
+          triggered = true; reason = 'TSL';
+        } else if (!pos.trailingActive && this.currentPrice <= pos.stopLoss) {
+          triggered = true; reason = 'SL';
+        }
+        if (this.currentPrice >= pos.takeProfit) { triggered = true; reason = 'TP'; }
       } else if (pos.side === 'SHORT') {
-        if (this.currentPrice >= pos.stopLoss) { triggered = true; reason = 'SL'; }
-        else if (this.currentPrice <= pos.takeProfit) { triggered = true; reason = 'TP'; }
+        if (pos.trailingActive && this.currentPrice >= pos.trailingStop) {
+          triggered = true; reason = 'TSL';
+        } else if (!pos.trailingActive && this.currentPrice >= pos.stopLoss) {
+          triggered = true; reason = 'SL';
+        }
+        if (this.currentPrice <= pos.takeProfit) { triggered = true; reason = 'TP'; }
       }
       if (triggered) {
         console.log(`⚡ ${pos.side} ${reason} triggered @ $${this.currentPrice.toLocaleString()}`);
@@ -527,6 +606,22 @@ class LiveTrader {
   }
 
   getStatus() {
+    // Include trailing stop info for open positions
+    let positionDetail = null;
+    if (this.positions.size > 0) {
+      const pos = Array.from(this.positions.values())[0];
+      positionDetail = {
+        side: pos.side,
+        entryPrice: pos.entryPrice,
+        quantity: pos.quantity,
+        currentSL: pos.trailingActive ? pos.trailingStop : pos.stopLoss,
+        currentTP: pos.takeProfit,
+        trailingActive: pos.trailingActive,
+        trailingStop: pos.trailingStop,
+        peakPrice: pos.peakPrice,
+        unrealizedPnl: this.getUnrealizedPnL()
+      };
+    }
     return {
       enabled: this.enabled,
       mode: this.mode,
@@ -539,7 +634,10 @@ class LiveTrader {
       currentPrice: this.currentPrice,
       stopLossPct: this.stopLossPercent,
       takeProfitPct: this.takeProfitPercent,
-      positionSize: this.positionSize
+      trailingActivation: this.trailingActivation,
+      trailingDistance: this.trailingDistance,
+      positionSize: this.positionSize,
+      position: positionDetail
     };
   }
 }

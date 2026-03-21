@@ -9,7 +9,20 @@
     "backtest": "node scripts/backtest.js",
     "test": "node test.js"
   },
-  "keywords": ["trading", "dqn", "binance", "crypto", "reinforcement-learning"],
+  "keywords": [
+    "trading",
+    "dqn",
+    "binance",
+    "crypto",
+    "reinforcement-learning"
+  ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
+    "express": "^5.2.1",
+    "nodemailer": "^8.0.3",
+    "numjs": "^0.16.1",
+    "socket.io": "^4.8.3"
+  }
 }

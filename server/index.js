@@ -78,14 +78,32 @@ function getNotifier() {
     return notifier;
 }
 
+// Alerter (Email/SMS)
+let alerter = null;
+function getAlerter() {
+    if (!alerter) {
+        alerter = new (require('../src/alerter'))({
+            smtpHost: process.env.SMTP_HOST,
+            smtpPort: process.env.SMTP_PORT,
+            smtpUser: process.env.SMTP_USER,
+            smtpPass: process.env.SMTP_PASS,
+            alertEmail: process.env.ALERT_EMAIL,
+            telegramToken: process.env.TELEGRAM_BOT_TOKEN,
+            telegramChatId: process.env.TELEGRAM_CHAT_ID
+        });
+    }
+    return alerter;
+}
+
 function sendPaperAlert(message) {
     const n = getNotifier();
     if (n) n.send(message);
 }
 
 // Paper trading milestone & DD alerts
-function checkPaperAlerts(currentEquity) {
+async function checkPaperAlerts(currentEquity) {
     const n = getNotifier();
+    const a = getAlerter();
     if (!n) return;
 
     const pnlPct = ((currentEquity - paperLastAlertBalance) / paperLastAlertBalance) * 100;
@@ -110,6 +128,10 @@ function checkPaperAlerts(currentEquity) {
     if (ddThreshold > paperMaxDrawdownAlerted && ddThreshold >= 5) {
         n.send(`⚠️ <b>Paper Trading - High Drawdown!</b>\n💰 Balance: <code>$${currentEquity.toFixed(2)}</code>\n📉 Drawdown: <code>${currentDD.toFixed(1)}%</code>\n📊 Peak: <code>$${paperPeakEquity.toFixed(2)}</code>`);
         paperMaxDrawdownAlerted = ddThreshold;
+        // Send email alert for significant drawdown
+        if (a && a.enabled && ddThreshold >= 10) {
+            await a.drawdownAlert(currentDD, 10);
+        }
     }
     // Reset DD alert when recovered
     if (currentDD < 2) paperMaxDrawdownAlerted = 0;
@@ -119,8 +141,9 @@ function checkPaperAlerts(currentEquity) {
 let lastAlertEpisodeBalance = 1000;
 let lastAlertEpisode = 0;
 
-function checkEpisodeAlerts(episodeNum, endEquity, pnlPct, tradesCount) {
+async function checkEpisodeAlerts(episodeNum, endEquity, pnlPct, tradesCount) {
     const n = getNotifier();
+    const a = getAlerter();
     if (!n) return;
 
     // Alert every 10 completed episodes with significant P&L
@@ -129,6 +152,11 @@ function checkEpisodeAlerts(episodeNum, endEquity, pnlPct, tradesCount) {
         n.send(`${emoji} <b>DQN Training Update</b>\n🎮 Episode: <code>#${episodeNum}</code>\n💰 Equity: <code>$${endEquity.toFixed(2)}</code>\n📈 P&L: <code>${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</code>\n📊 Trades: ${tradesCount}`);
         lastAlertEpisode = episodeNum;
         lastAlertEpisodeBalance = endEquity;
+        
+        // Send email milestone alert
+        if (a && a.enabled && episodeNum % 50 === 0) {
+            await a.milestoneAlert(endEquity, tradesCount, pnlPct / 100);
+        }
     }
 
     // Significant P&L milestone
@@ -896,6 +924,30 @@ const server = http.createServer(async (req, res) => {
     if (url === '/api/training/save') {
         await saveModel();
         res.end(JSON.stringify({ success: true }));
+        return;
+    }
+    
+    // GET /api/alerter/test - test email/SMS alerts
+    if (url === '/api/alerter/test') {
+        const a = getAlerter();
+        if (!a || (!a.enabled && !a.smsFallback)) {
+            res.end(JSON.stringify({ success: false, message: 'Alerter not configured' }));
+            return;
+        }
+        await a.test();
+        res.end(JSON.stringify({ success: true, message: 'Test alert sent' }));
+        return;
+    }
+    
+    // GET /api/alerter/status - check alerter configuration
+    if (url === '/api/alerter/status') {
+        const a = getAlerter();
+        res.end(JSON.stringify({
+            emailEnabled: a.enabled,
+            telegramFallback: a.smsFallback,
+            smtpHost: a.smtpHost || null,
+            alertEmail: a.alertEmail || null
+        }));
         return;
     }
     

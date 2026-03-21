@@ -204,6 +204,20 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 </div>
 </div>
 </div>
+<div class="card" style="margin-top:20px" id="lastEpisodeCard">
+<div class="card-header" id="lastEpisodeHeader">📺 Ostatni epizod <span id="lastEpisodeNum"></span></div>
+<div class="card-body">
+<div style="position:relative;height:200px">
+<canvas id="lastEpisodeChart"></canvas>
+</div>
+<div style="display:flex;gap:16px;margin-top:12px;font-size:.7rem;margin-bottom:8px">
+<span style="color:var(--green)">● BUY</span>
+<span style="color:var(--red)">● SELL</span>
+<span id="lastEquityLegend" style="color:var(--purple);display:none">● Equity %</span>
+</div>
+<div id="lastEpisodeStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:.7rem"></div>
+</div>
+</div>
 <div class="card" style="margin-top:20px">
 <div class="card-header">📜 Historia epizodów</div>
 <div class="card-body" style="padding:12px">
@@ -394,7 +408,9 @@ input:checked+.slider:before{transform:translateX(20px);background:#fff}
 <script>
 let trading=false;
 let chart=null;
+let lastEpisodeChart=null;
 let chartData={prices:[],trades:[],epsilons:[],equity:[]};
+let lastEpisodeData=null;
 let episodeStartEquity=1000;
 
 function initChart(){
@@ -512,6 +528,85 @@ function initChart(){
   });
 }
 
+function initLastEpisodeChart(){
+  const ctx=document.getElementById('lastEpisodeChart').getContext('2d');
+  lastEpisodeChart=new Chart(ctx,{
+    type:'line',
+    data:{
+      labels:[],
+      datasets:[
+        {
+          label:'Cena BTC',
+          data:[],
+          borderColor:'#f7931a',
+          backgroundColor:'rgba(247,147,26,.1)',
+          fill:true,
+          tension:.3,
+          pointRadius:0,
+          borderWidth:2,
+          yAxisID:'y'
+        },
+        {
+          label:'BUY',
+          data:[],
+          borderColor:'#3fb950',
+          backgroundColor:'#3fb950',
+          pointStyle:'triangle',
+          pointRadius:8,
+          pointHoverRadius:10,
+          showLine:false,
+          yAxisID:'y',
+          type:'scatter'
+        },
+        {
+          label:'SELL',
+          data:[],
+          borderColor:'#f85149',
+          backgroundColor:'#f85149',
+          pointStyle:'triangle',
+          pointRadius:8,
+          pointHoverRadius:10,
+          showLine:false,
+          yAxisID:'y',
+          type:'scatter'
+        },
+        {
+          label:'Equity %',
+          data:[],
+          borderColor:'#a371f7',
+          backgroundColor:'rgba(163,113,247,.1)',
+          fill:true,
+          tension:.3,
+          pointRadius:0,
+          borderWidth:2,
+          yAxisID:'y2'
+        }
+      ]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{legend:{display:false},tooltip:{
+        backgroundColor:'#1c2128',borderColor:'#30363d',borderWidth:1,
+        titleColor:'#c9d1d9',bodyColor:'#8b949e',padding:12
+      }},
+      scales:{
+        x:{display:false,grid:{display:false}},
+        y:{
+          type:'linear',display:true,position:'left',
+          grid:{color:'rgba(48,54,61,.5)'},
+          ticks:{color:'#8b949e',font:{size:10}}
+        },
+        y2:{
+          type:'linear',display:false,position:'right',
+          grid:{display:false}
+        }
+      }
+    }
+  });
+}
+
 async function updateChart(){
   try {
     const d=await fetch('/api/episode-data').then(r=>r.json());
@@ -543,6 +638,67 @@ async function updateChart(){
     }
     chart.update('none');
   } catch(e){}
+}
+
+async function updateLastEpisode(){
+  try {
+    const hist=await fetch('/api/episode-history').then(r=>r.json());
+    if(!hist||hist.length===0)return;
+    const last=hist[hist.length-1];
+    const detail=await fetch('/api/episode-history/detail?episode='+last.episode).then(r=>r.json());
+    if(!detail||!detail.trades)return;
+    lastEpisodeData=detail;
+    document.getElementById('lastEpisodeNum').textContent='#'+last.episode;
+    // Render chart
+    if(!lastEpisodeChart)initLastEpisodeChart();
+    const steps=[];
+    for(let i=0;i<(detail.steps||100);i++)steps.push(i);
+    const trades=detail.trades||[];
+    const buyData=trades.filter(t=>t.action==='BUY').map(t=>({x:t.step,y:t.price}));
+    const sellData=trades.filter(t=>t.action==='SELL').map(t=>({x:t.step,y:t.price}));
+    // Build synthetic price data (use trade prices as reference points)
+    const allPrices=[];
+    trades.forEach(t=>{allPrices.push({step:t.step,price:t.price});});
+    const basePrice=detail.startEquity||1000;
+    // Use a simple synthetic price line based on equity changes
+    // For last episode chart, we'll use trade price steps to reconstruct a price-like view
+    lastEpisodeChart.data.labels=steps;
+    lastEpisodeChart.data.datasets[0].data=steps.map(s=>{
+      const trade=trades.find(t=>t.step===s);
+      return trade?trade.price:(allPrices.length>0?allPrices[0].price:basePrice);
+    });
+    lastEpisodeChart.data.datasets[1].data=buyData;
+    lastEpisodeChart.data.datasets[2].data=sellData;
+    // Equity % curve
+    const startEq=detail.startEquity||1000;
+    const endEq=detail.endEquity||startEq;
+    const equityPct=(endEq-startEq)/startEq*100;
+    lastEpisodeChart.data.datasets[3].data=steps.map((_,i)=>{
+      const t=trades[i];
+      if(!t)return null;
+      // Approximate equity% at each trade step
+      const pnlSoFar=trades.slice(0,i+1).reduce((s,tr)=>s+(tr.pnl||0),0);
+      return ((startEq+pnlSoFar-startEq)/startEq)*100;
+    }).filter(v=>v!==null);
+    if(lastEpisodeChart.data.datasets[3].data.length>0){
+      lastEpisodeChart.options.scales.y2.display=true;
+      document.getElementById('lastEquityLegend').style.display='';
+    } else {
+      lastEpisodeChart.options.scales.y2.display=false;
+      document.getElementById('lastEquityLegend').style.display='none';
+    }
+    lastEpisodeChart.update('none');
+    // Stats bar
+    const pnl=detail.pnlPercent||0;
+    const pnlStr=pnl>=0?'+'+pnl.toFixed(2)+'%':' '+pnl.toFixed(2)+'%';
+    const pnlCls=pnl>=0?'pos':'neg';
+    document.getElementById('lastEpisodeStats').innerHTML=`
+      <div class="modal-stat"><div class="label">P&L</div><div class="value ${pnlCls}">${pnlStr}</div></div>
+      <div class="modal-stat"><div class="label">Trades</div><div class="value">${trades.length}</div></div>
+      <div class="modal-stat"><div class="label">Max DD</div><div class="value neg">${(detail.maxDrawdown||0).toFixed(1)}%</div></div>
+      <div class="modal-stat"><div class="label">Balance</div><div class="value">$${(detail.endEquity||0).toFixed(0)}</div></div>
+    `;
+  } catch(e){console.error('updateLastEpisode:',e);}
 }
 
 async function updateHistory(){
@@ -663,6 +819,7 @@ async function update(){
     }
     updateChart();
     updateHistory();
+    updateLastEpisode();
   } catch(e){log('API error: '+e.message,'sell')}
 }
 document.getElementById('trainBtn').onclick=async()=>{

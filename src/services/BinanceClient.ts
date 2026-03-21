@@ -54,4 +54,83 @@ export class BinanceClient {
   async getBalances(): Promise<{ asset: string; free: number; locked: number }[]> {
     return [{ asset: 'USDT', free: 1000, locked: 0 }, { asset: 'BTC', free: 0, locked: 0 }];
   }
+
+  /**
+   * Get multiple timeframes of klines for multi-timeframe analysis
+   * @param symbol Trading pair
+   * @param intervals Array of intervals, e.g. ['5m', '1h', '4h']
+   * @param limit Number of candles per timeframe
+   */
+  async getMultiTimeframeKlines(
+    symbol: string = 'BTCUSDT',
+    intervals: string[] = ['5m', '1h', '4h'],
+    limit: number = 100
+  ): Promise<Record<string, any[]>> {
+    const results: Record<string, any[]> = {};
+    await Promise.all(
+      intervals.map(async (interval) => {
+        results[interval] = await this.getKlines(symbol, interval, limit);
+      })
+    );
+    return results;
+  }
+
+  /**
+   * Get HTF (higher timeframe) trend indicators without full candle data
+   * Returns just the trend direction and key levels for the given interval
+   */
+  async getHTFTrend(symbol: string = 'BTCUSDT', interval: string = '1h'): Promise<{
+    trend: 'bull' | 'bear' | 'neutral';
+    rsi: number;
+    ema200Dist: number; // % distance from EMA200
+    volumeRatio: number;
+  }> {
+    const klines = await this.getKlines(symbol, interval, 200);
+    if (klines.length < 200) return { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 };
+    
+    const closes = klines.map(k => k.close);
+    const volumes = klines.map(k => k.volume);
+    const ema200 = this.calcEMA(closes, 200);
+    const currentClose = closes[closes.length - 1];
+    const rsi = this.calcRSI(closes, 14);
+    
+    // Trend: compare EMA200 slope over last 20 candles
+    const emaSlope = (closes[closes.length - 1] - closes[closes.length - 20]) / closes[closes.length - 20];
+    
+    let trend: 'bull' | 'bear' | 'neutral' = 'neutral';
+    if (currentClose > ema200 && emaSlope > 0.005) trend = 'bull';
+    else if (currentClose < ema200 && emaSlope < -0.005) trend = 'bear';
+    
+    const volumeAvg = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+    const volumeRatio = volumes[volumes.length - 1] / volumeAvg;
+    
+    return {
+      trend,
+      rsi,
+      ema200Dist: ((currentClose - ema200) / ema200) * 100,
+      volumeRatio
+    };
+  }
+
+  private calcEMA(prices: number[], period: number): number {
+    if (prices.length < period) return prices[prices.length - 1];
+    const k = 2 / (period + 1);
+    let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < prices.length; i++) {
+      ema = prices[i] * k + ema * (1 - k);
+    }
+    return ema;
+  }
+
+  private calcRSI(prices: number[], period: number): number {
+    if (prices.length < period + 1) return 50;
+    let gains = 0, losses = 0;
+    for (let i = prices.length - period; i < prices.length; i++) {
+      const diff = prices[i] - prices[i - 1];
+      if (diff > 0) gains += diff; else losses -= diff;
+    }
+    const avgGain = gains / period, avgLoss = losses / period;
+    if (avgLoss === 0) return 100;
+    return 100 - (100 / (1 + avgGain / avgLoss));
+  }
 }

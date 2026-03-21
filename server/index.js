@@ -53,6 +53,9 @@ function paperLog(...args) {
 }
 let paperCandles = [];
 let paperStrategy = 'trend';
+let htfState = { h1: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 }, h4: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 } };
+const HTF_UPDATE_INTERVAL = 60000; // Update HTF every 60s
+let lastHtfUpdate = 0;
 let paperPositionSize = 0.95;
 let paperLastTradeTime = 0;
 const PAPER_TRADE_COOLDOWN = 30000; // 30s between trades
@@ -316,17 +319,36 @@ function calcMACD(prices, fast = 12, slow = 26, signal = 9) {
 }
 
 // Paper trading signal - returns 'BUY', 'SELL' (close long/short), or 'HOLD'
-function paperSignal(candles, ind) {
+function paperSignal(candles, ind, htf) {
     const last = candles[candles.length - 1];
     if (!last || !ind.ema9) return 'HOLD';
     
     if (paperStrategy === 'trend') {
         // BUY = uptrend confirmation, SHORT = downtrend confirmation
-        if (ind.ema9 > ind.ema21 && last.close > ind.ema9) return 'BUY';
-        if (ind.ema9 < ind.ema21 && last.close < ind.ema9) return 'SHORT';
+        // Only trade with HTF trend (4H) for higher probability setups
+        const h4 = htf?.h4?.trend || 'neutral';
+        if (ind.ema9 > ind.ema21 && last.close > ind.ema9) {
+            // In HTF downtrend, don't BUY (or close longs faster)
+            if (h4 === 'bear') return 'HOLD';
+            return 'BUY';
+        }
+        if (ind.ema9 < ind.ema21 && last.close < ind.ema9) {
+            // In HTF uptrend, don't SHORT
+            if (h4 === 'bull') return 'HOLD';
+            return 'SHORT';
+        }
     } else if (paperStrategy === 'momentum') {
-        if (ind.rsi < 30) return 'BUY';
-        if (ind.rsi > 70) return 'SHORT';
+        // Use HTF RSI to filter - only buy oversold in bull trend, only short overbought in bear trend
+        const h4 = htf?.h4?.trend || 'neutral';
+        const h1Rsi = htf?.h1?.rsi || 50;
+        if (ind.rsi < 30) {
+            if (h4 === 'bear' && h1Rsi > 50) return 'HOLD'; // Weak bounce in HTF downtrend
+            return 'BUY';
+        }
+        if (ind.rsi > 70) {
+            if (h4 === 'bull' && h1Rsi < 50) return 'HOLD'; // Weak drop in HTF uptrend
+            return 'SHORT';
+        }
     } else if (paperStrategy === 'macd') {
         if (ind.macd.histogram > 0.5) return 'BUY';
         if (ind.macd.histogram < -0.5) return 'SHORT';
@@ -348,11 +370,13 @@ function paperSignal(candles, ind) {
             // if (price >= bbMiddle && price <= bbMiddle * 1.02) return 'CLOSE';
         }
     } else if (paperStrategy === 'scalping') {
-        // Scalping: fast EMA crossover + RSI + volume confirmation
+        // Scalping: fast EMA crossover + RSI + volume confirmation + HTF trend filter
         if (candles.length < 20 || !ind.ema9 || !ind.ema21) return 'HOLD';
         
         const closes = candles.map(c => c.close);
         const volumes = candles.map(c => c.volume);
+        const h4 = htf?.h4?.trend || 'neutral';
+        const h1 = htf?.h1 || {};
         
         // Fast EMA crossover (EMA5 vs EMA21)
         const ema5 = calcEMA(closes, 5);
@@ -370,15 +394,15 @@ function paperSignal(candles, ind) {
         // RSI
         const rsi = ind.rsi || 50;
         
-        // BUY: EMA cross up + RSI not overbought + volume
-        if (emaCrossUp && rsi < 65 && volSurge) return 'BUY';
+        // BUY: EMA cross up + RSI not overbought + volume + no HTF bear
+        if (emaCrossUp && rsi < 65 && volSurge && h4 !== 'bear') return 'BUY';
         
-        // SHORT: EMA cross down + RSI not oversold
-        if (emaCrossDown && rsi > 35) return 'SHORT';
+        // SHORT: EMA cross down + RSI not oversold + no HTF bull
+        if (emaCrossDown && rsi > 35 && h4 !== 'bull') return 'SHORT';
         
-        // Quick bounces
-        if (rsi < 25) return 'BUY';
-        if (rsi > 75) return 'SHORT';
+        // Quick bounces with HTF filter
+        if (rsi < 25 && h4 !== 'bear') return 'BUY';
+        if (rsi > 75 && h4 !== 'bull') return 'SHORT';
     }
     return 'HOLD';
 }
@@ -491,7 +515,7 @@ async function paperTradingStep() {
     if (candles.length < 50) return;
     
     const ind = calcIndicators(candles);
-    const signal = paperSignal(candles, ind);
+    const signal = paperSignal(candles, ind, htfState);
     
     // Update unrealized P&L and check SL/TP
     let slTpTriggered = false;
@@ -647,6 +671,12 @@ const server = http.createServer(async (req, res) => {
     
     if (url === '/api/portfolio') {
         res.end(JSON.stringify(portfolio));
+        return;
+    }
+    
+    // Multi-timeframe HTF trend (for paper trading signal enhancement)
+    if (url === '/api/htf-trend') {
+        res.end(JSON.stringify(htfState));
         return;
     }
     
@@ -1074,11 +1104,28 @@ async function updatePrices() {
     } catch (e) {}
 }
 
+// Update HTF (higher timeframe) trends - called every 60s
+async function updateHtfTrends() {
+    try {
+        const { BinanceClient } = require('../src/services/BinanceClient');
+        const client = new BinanceClient();
+        const [h1, h4] = await Promise.all([
+            client.getHTFTrend('BTCUSDT', '1h'),
+            client.getHTFTrend('BTCUSDT', '4h')
+        ]);
+        htfState = { h1, h4 };
+    } catch (e) {
+        console.error('HTF update failed:', e.message);
+    }
+}
+
 // Routes
 setInterval(updatePrices, 3000);
 setInterval(trainingStep, 1000);
 setInterval(paperTradingStep, 5000); // Paper trading check every 5s
+setInterval(updateHtfTrends, HTF_UPDATE_INTERVAL);
 updatePrices();
+updateHtfTrends(); // Initial HTF load
 
 // Load last model on start
 loadLastModel();

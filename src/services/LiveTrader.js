@@ -7,6 +7,7 @@
  */
 
 const BASE_URL = 'https://api.binance.com';
+const { fetchHTFState, filterSignalWithHTF } = require('../mtfFilter');
 
 /**
  * Create HMAC-SHA256 signature for Binance API
@@ -48,6 +49,11 @@ class LiveTrader {
 
     this.enabled = false;
     this.mode = 'paper';
+    this.strategy = 'trend';        // 'trend' | 'momentum' | 'macd' | 'scalping' | 'grid'
+    this.autoTrading = false;       // Auto-open positions based on HTF-filtered signals
+    this.autoTradingInterval = null;
+    this.htfState = { h1: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 }, h4: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 } };
+    this.htfUpdateInterval = null;
     this.positions = new Map();
     this.closedTrades = [];
 
@@ -75,6 +81,11 @@ class LiveTrader {
     if (config.trailingActivation) this.trailingActivation = config.trailingActivation;
     if (config.trailingDistance) this.trailingDistance = config.trailingDistance;
     if (config.testMode !== undefined) this.testMode = config.testMode;
+    if (config.strategy) this.strategy = config.strategy;
+    if (config.autoTrading !== undefined) {
+      if (config.autoTrading) this.startAutoTrading();
+      else this.stopAutoTrading();
+    }
   }
 
   isConfigured() { return !!(this.apiKey && this.apiSecret); }
@@ -89,11 +100,163 @@ class LiveTrader {
   setTrailingActivation(pct) { this.trailingActivation = Math.max(0.1, Math.min(20, pct)); }
   setTrailingDistance(pct) { this.trailingDistance = Math.max(0.1, Math.min(10, pct)); }
   setPositionSize(size) { this.positionSize = Math.max(0.01, Math.min(1.0, size)); }
+  setStrategy(strategy) { this.strategy = strategy; }
+
+  startAutoTrading(intervalMs = 10000) {
+    this.stopAutoTrading();
+    this.autoTrading = true;
+    this.autoTradingInterval = setInterval(async () => {
+      await this.autoTradingStep();
+    }, intervalMs);
+    console.log(`[LiveTrader] Auto-trading ON (${this.strategy}, every ${intervalMs}ms)`);
+  }
+
+  stopAutoTrading() {
+    if (this.autoTradingInterval) { clearInterval(this.autoTradingInterval); this.autoTradingInterval = null; }
+    this.autoTrading = false;
+  }
+
+  isAutoTrading() { return this.autoTrading; }
+
+  // ─── Local indicator calculation ─────────────────────────────────────────
+
+  calcEMA(prices, period) {
+    if (prices.length < period) return prices[prices.length - 1];
+    const k = 2 / (period + 1);
+    let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < prices.length; i++) {
+      ema = prices[i] * k + ema * (1 - k);
+    }
+    return ema;
+  }
+
+  calcRSI(prices, period = 14) {
+    if (prices.length < period + 1) return 50;
+    let gains = 0, losses = 0;
+    for (let i = prices.length - period; i < prices.length; i++) {
+      const diff = prices[i] - prices[i - 1];
+      if (diff > 0) gains += diff; else losses -= diff;
+    }
+    if (losses === 0) return 100;
+    const rs = gains / losses;
+    return 100 - 100 / (1 + rs);
+  }
+
+  async calculateIndicators() {
+    const candles = await this.fetchCandles(this.symbol, '1m', 100);
+    if (candles.length < 21) return null;
+    const closes = candles.map(c => c.close);
+    const ind = {
+      ema9: this.calcEMA(closes, 9),
+      ema21: this.calcEMA(closes, 21),
+      rsi: this.calcRSI(closes, 14)
+    };
+    // Add EMA5 for scalping
+    if (candles.length >= 5) {
+      ind.ema5 = this.calcEMA(closes, 5);
+      ind.ema5Prev = this.calcEMA(closes.slice(0, -1), 5);
+    }
+    ind.ema21Prev = this.calcEMA(closes.slice(0, -1), 21);
+    return ind;
+  }
+
+  async fetchCandles(symbol, interval, limit = 100) {
+    try {
+      const url = `${BASE_URL}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+      const r = await fetch(url);
+      if (!r.ok) return [];
+      const data = await r.json();
+      return data.map(k => ({
+        open: parseFloat(k[1]), high: parseFloat(k[2]),
+        low: parseFloat(k[3]), close: parseFloat(k[4]),
+        volume: parseFloat(k[5]), timestamp: parseInt(k[0])
+      }));
+    } catch { return []; }
+  }
+
+  // ─── Auto-trading: evaluate signal and open positions ────────────────────
+
+  async autoTradingStep(strategy) {
+    if (!this.enabled || this.positions.size > 0) return null;
+    if (this.strategy === 'grid') return null; // Grid uses manual/special triggers
+
+    const candles = await this.fetchCandles(this.symbol, '1m', 100);
+    if (candles.length < 21) return null;
+    const ind = await this.calculateIndicators();
+    if (!ind) return null;
+
+    // Generate raw signal
+    let rawSignal = await this.generateSignal(candles, ind);
+    if (rawSignal === 'HOLD') return null;
+
+    // Apply HTF filter
+    const signal = filterSignalWithHTF(rawSignal, this.strategy, this.htfState, ind);
+    if (signal === 'HOLD') return null;
+
+    // Open position
+    if (signal === 'BUY') {
+      const pos = await this.openLong();
+      if (pos) console.log(`[LiveTrader] HTF-filtered BUY signal → LONG opened @ $${pos.entryPrice.toLocaleString()} (H4: ${this.htfState.h4.trend})`);
+      return pos;
+    }
+    if (signal === 'SHORT') {
+      const pos = await this.openShort();
+      if (pos) console.log(`[LiveTrader] HTF-filtered SHORT signal → SHORT opened @ $${pos.entryPrice.toLocaleString()} (H4: ${this.htfState.h4.trend})`);
+      return pos;
+    }
+    return null;
+  }
+
+  // ─── Generate trading signal (mirrors paperSignal logic) ──────────────────
+
+  async generateSignal(candles, ind) {
+    if (!candles || candles.length < 21 || !ind || !ind.ema9) return 'HOLD';
+    const last = candles[candles.length - 1];
+
+    if (this.strategy === 'trend') {
+      if (ind.ema9 > ind.ema21 && last.close > ind.ema9) return 'BUY';
+      if (ind.ema9 < ind.ema21 && last.close < ind.ema9) return 'SHORT';
+    } else if (this.strategy === 'momentum') {
+      if (ind.rsi < 30) return 'BUY';
+      if (ind.rsi > 70) return 'SHORT';
+    } else if (this.strategy === 'macd') {
+      // Quick MACD proxy: ema9 > ema21 = bull momentum
+      if (ind.ema9 > ind.ema21 * 1.001) return 'BUY';
+      if (ind.ema9 < ind.ema21 * 0.999) return 'SHORT';
+    } else if (this.strategy === 'scalping') {
+      if (candles.length < 20 || !ind.ema5) return 'HOLD';
+      const emaCrossUp = ind.ema5 > ind.ema21 && ind.ema5Prev <= ind.ema21Prev;
+      const emaCrossDown = ind.ema5 < ind.ema21 && ind.ema5Prev >= ind.ema21Prev;
+      const rsi = ind.rsi || 50;
+      if (emaCrossUp && rsi < 65 && this.htfState.h4.trend !== 'bear') return 'BUY';
+      if (emaCrossDown && rsi > 35 && this.htfState.h4.trend !== 'bull') return 'SHORT';
+      if (rsi < 25 && this.htfState.h4.trend !== 'bear') return 'BUY';
+      if (rsi > 75 && this.htfState.h4.trend !== 'bull') return 'SHORT';
+    }
+    // grid: no signal generation (price-level triggered)
+    return 'HOLD';
+  }
 
   onPrice(cb) {
     this.priceCallbacks.push(cb);
     return () => { this.priceCallbacks = this.priceCallbacks.filter(x => x !== cb); };
   }
+
+  async startHTFUpdates() {
+    this.stopHTFUpdates();
+    // Initial fetch
+    this.htfState = await fetchHTFState(this.symbol);
+    // Update every 60s
+    this.htfUpdateInterval = setInterval(async () => {
+      this.htfState = await fetchHTFState(this.symbol);
+    }, 60000);
+  }
+
+  stopHTFUpdates() {
+    if (this.htfUpdateInterval) { clearInterval(this.htfUpdateInterval); this.htfUpdateInterval = null; }
+  }
+
+  getHTFState() { return this.htfState; }
 
   startPriceUpdates() {
     this.stopPriceUpdates();
@@ -537,12 +700,14 @@ class LiveTrader {
     this.mode = testMode ? 'paper' : 'live';
     this.positions.clear();
     this.closedTrades = [];
+    await this.startHTFUpdates();
     this.startPriceUpdates();
   }
 
   disable() {
     this.enabled = false;
-    this.mode = 'paper';
+    this.stopAutoTrading();
+    this.stopHTFUpdates();
     this.stopPriceUpdates();
   }
 
@@ -553,6 +718,8 @@ class LiveTrader {
     this.peakBalance = this.baseCapital;
     this.maxDrawdown = 0;
     this.maxDrawdownPercent = 0;
+    this.htfState = { h1: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 }, h4: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 } };
+    this.stopAutoTrading();
   }
 
   getStats() {
@@ -637,6 +804,12 @@ class LiveTrader {
       trailingActivation: this.trailingActivation,
       trailingDistance: this.trailingDistance,
       positionSize: this.positionSize,
+      strategy: this.strategy,
+      autoTrading: this.autoTrading,
+      htfState: {
+        h1: this.htfState.h1,
+        h4: this.htfState.h4
+      },
       position: positionDetail,
       recentTrades: this.closedTrades.slice(-20).map(t => ({
         side: t.side,

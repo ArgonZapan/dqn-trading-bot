@@ -1031,7 +1031,9 @@ async function trainingStep() {
             maxDrawdown,
             finalEpsilon: agent.epsilon,
             timestamp: Date.now(),
-            trades: completedTrades
+            trades: completedTrades,
+            prices: [...currentEpisodeSteps],
+            equity: [...episodeEquity]
         });
         if (episodeHistory.length > MAX_HISTORY) episodeHistory.shift();
 

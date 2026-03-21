@@ -649,43 +649,29 @@ async function updateLastEpisode(){
     if(!detail||!detail.trades)return;
     lastEpisodeData=detail;
     document.getElementById('lastEpisodeNum').textContent='#'+last.episode;
-    // Render chart
+    // Render chart with real prices + buy/sell markers + equity curve
     if(!lastEpisodeChart)initLastEpisodeChart();
-    const steps=[];
-    for(let i=0;i<(detail.steps||100);i++)steps.push(i);
     const trades=detail.trades||[];
+    const prices=detail.prices||[];
+    const equity=detail.equity||[];
     const buyData=trades.filter(t=>t.action==='BUY').map(t=>({x:t.step,y:t.price}));
     const sellData=trades.filter(t=>t.action==='SELL').map(t=>({x:t.step,y:t.price}));
-    // Build synthetic price data (use trade prices as reference points)
-    const allPrices=[];
-    trades.forEach(t=>{allPrices.push({step:t.step,price:t.price});});
-    const basePrice=detail.startEquity||1000;
-    // Use a simple synthetic price line based on equity changes
-    // For last episode chart, we'll use trade price steps to reconstruct a price-like view
-    lastEpisodeChart.data.labels=steps;
-    lastEpisodeChart.data.datasets[0].data=steps.map(s=>{
-      const trade=trades.find(t=>t.step===s);
-      return trade?trade.price:(allPrices.length>0?allPrices[0].price:basePrice);
-    });
+    // Use real prices if available, else step index for labels
+    const hasRealPrices=prices.length>0;
+    lastEpisodeChart.data.labels=hasRealPrices?prices.map(p=>p.step):trades.map(t=>t.step);
+    lastEpisodeChart.data.datasets[0].data=hasRealPrices?prices.map(p=>({x:p.step,y:p.price})):buyData;
     lastEpisodeChart.data.datasets[1].data=buyData;
     lastEpisodeChart.data.datasets[2].data=sellData;
-    // Equity % curve
-    const startEq=detail.startEquity||1000;
-    const endEq=detail.endEquity||startEq;
-    const equityPct=(endEq-startEq)/startEq*100;
-    lastEpisodeChart.data.datasets[3].data=steps.map((_,i)=>{
-      const t=trades[i];
-      if(!t)return null;
-      // Approximate equity% at each trade step
-      const pnlSoFar=trades.slice(0,i+1).reduce((s,tr)=>s+(tr.pnl||0),0);
-      return ((startEq+pnlSoFar-startEq)/startEq)*100;
-    }).filter(v=>v!==null);
-    if(lastEpisodeChart.data.datasets[3].data.length>0){
+    // Equity % curve from real equity data
+    if(equity.length>0){
+      const baseEq=equity[0].equity||1000;
+      lastEpisodeChart.data.datasets[3].data=equity.map(e=>({x:e.step,y:((e.equity-baseEq)/baseEq)*100}));
       lastEpisodeChart.options.scales.y2.display=true;
-      document.getElementById('lastEquityLegend').style.display='';
+      lastEpisodeChart.options.scales.y2.min=Math.min(...lastEpisodeChart.data.datasets[3].data.map(e=>e.y))-1;
+      lastEpisodeChart.options.scales.y2.max=Math.max(...lastEpisodeChart.data.datasets[3].data.map(e=>e.y))+1;
     } else {
+      lastEpisodeChart.data.datasets[3].data=[];
       lastEpisodeChart.options.scales.y2.display=false;
-      document.getElementById('lastEquityLegend').style.display='none';
     }
     lastEpisodeChart.update('none');
     // Stats bar

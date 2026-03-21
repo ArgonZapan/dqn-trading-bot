@@ -1520,7 +1520,7 @@ async function updatePrices() {
 // Update HTF (higher timeframe) trends - called every 60s
 async function updateHtfTrends() {
     try {
-        const { BinanceClient } = require('../src/services/BinanceClient');
+        const { BinanceClient } = require('../dist/src/services/BinanceClient');
         const client = new BinanceClient();
         const [h1, h4] = await Promise.all([
             client.getHTFTrend('BTCUSDT', '1h'),

@@ -460,6 +460,46 @@ input[type="number"], input[type="text"], select {
 </div>
 </div>
 <div class="card" style="margin-top:16px">
+<div class="card-header">🗺️ Market Regime <span style="font-size:.6rem;color:var(--text2)">HTF Trend Filter</span></div>
+<div class="card-body">
+<div id="htfLoading" style="text-align:center;color:var(--text2);font-size:.7rem;padding:8px">Loading HTF data...</div>
+<div id="htfContent" style="display:none">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div style="background:var(--bg);border-radius:10px;padding:12px;border:1px solid var(--border)">
+<div style="font-size:.65rem;color:var(--text2);text-transform:uppercase;margin-bottom:8px">1H Timeframe</div>
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+<span id="htfH1Trend" style="font-size:.8rem;font-weight:700;padding:3px 10px;border-radius:8px"></span>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:.65rem">
+<div><span style="color:var(--text2)">RSI(14)</span></div>
+<div id="htfH1Rsi" style="font-weight:600;text-align:right">--</div>
+<div><span style="color:var(--text2)">EMA200 Dist</span></div>
+<div id="htfH1Ema" style="font-weight:600;text-align:right">--</div>
+<div><span style="color:var(--text2)">Vol Ratio</span></div>
+<div id="htfH1Vol" style="font-weight:600;text-align:right">--</div>
+</div>
+</div>
+<div style="background:var(--bg);border-radius:10px;padding:12px;border:1px solid var(--border)">
+<div style="font-size:.65rem;color:var(--text2);text-transform:uppercase;margin-bottom:8px">4H Timeframe</div>
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+<span id="htfH4Trend" style="font-size:.8rem;font-weight:700;padding:3px 10px;border-radius:8px"></span>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:.65rem">
+<div><span style="color:var(--text2)">RSI(14)</span></div>
+<div id="htfH4Rsi" style="font-weight:600;text-align:right">--</div>
+<div><span style="color:var(--text2)">EMA200 Dist</span></div>
+<div id="htfH4Ema" style="font-weight:600;text-align:right">--</div>
+<div><span style="color:var(--text2)">Vol Ratio</span></div>
+<div id="htfH4Vol" style="font-weight:600;text-align:right">--</div>
+</div>
+</div>
+</div>
+<div id="htfSignal" style="margin-top:10px;text-align:center;font-size:.7rem;color:var(--text2);padding:6px;background:var(--bg);border-radius:8px">
+Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
+</div>
+</div>
+</div>
+<div class="card" style="margin-top:16px">
 <div class="card-header">💼 Portfolio</div>
 <div class="card-body">
 <div class="metrics-grid">
@@ -1801,6 +1841,85 @@ refreshAlerterStatus();
   }
 }
 
+// HTF Market Regime updater
+async function updateHTF() {
+  try {
+    const d = await fetch('/api/htf-trend').then(r => r.json());
+    if (!d || !d.h1 || !d.h4) return;
+    
+    const loading = document.getElementById('htfLoading');
+    const content = document.getElementById('htfContent');
+    if (loading && content) {
+      loading.style.display = 'none';
+      content.style.display = 'block';
+    }
+    
+    const trendColors = {
+      'bull': { bg: 'rgba(63,185,80,.2)', color: 'var(--green)', label: '🟢 BULL' },
+      'bear': { bg: 'rgba(248,81,73,.2)', color: 'var(--red)', label: '🔴 BEAR' },
+      'neutral': { bg: 'rgba(139,148,158,.15)', color: 'var(--text2)', label: '⚪ NEUTRAL' }
+    };
+    
+    function setTrend(id, trend) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const t = trendColors[trend] || trendColors.neutral;
+      el.textContent = t.label;
+      el.style.background = t.bg;
+      el.style.color = t.color;
+    }
+    
+    function setVal(id, val, suffix = '', decimals = 2) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = typeof val === 'number' ? val.toFixed(decimals) + suffix : '--' + suffix;
+      // Color RSI
+      if (id.includes('Rsi')) {
+        const v = parseFloat(val);
+        el.style.color = v > 70 ? 'var(--red)' : v < 30 ? 'var(--green)' : '';
+      }
+      // Color EMA distance
+      if (id.includes('Ema')) {
+        const v = parseFloat(val);
+        el.style.color = v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : '';
+      }
+      // Color Volume ratio
+      if (id.includes('Vol')) {
+        const v = parseFloat(val);
+        el.style.color = v > 1.5 ? 'var(--orange)' : v < 0.8 ? 'var(--text2)' : '';
+      }
+    }
+    
+    setTrend('htfH1Trend', d.h1.trend);
+    setTrend('htfH4Trend', d.h4.trend);
+    setVal('htfH1Rsi', d.h1.rsi);
+    setVal('htfH1Ema', d.h1.ema200Dist, '%');
+    setVal('htfH1Vol', d.h1.volumeRatio, 'x');
+    setVal('htfH4Rsi', d.h4.rsi);
+    setVal('htfH4Ema', d.h4.ema200Dist, '%');
+    setVal('htfH4Vol', d.h4.volumeRatio, 'x');
+    
+    // Signal filter text
+    const h4 = d.h4?.trend || 'neutral';
+    const signalEl = document.getElementById('htfSignalText');
+    if (signalEl) {
+      if (h4 === 'bull') {
+        signalEl.textContent = 'Longs allowed • Shorts filtered';
+        signalEl.style.color = 'var(--green)';
+      } else if (h4 === 'bear') {
+        signalEl.textContent = 'Shorts allowed • Longs filtered';
+        signalEl.style.color = 'var(--red)';
+      } else {
+        signalEl.textContent = 'All signals allowed (neutral)';
+        signalEl.style.color = 'var(--text2)';
+      }
+    }
+  } catch(e) {
+    const loading = document.getElementById('htfLoading');
+    if (loading) loading.textContent = 'HTF data unavailable';
+  }
+}
+
 // Update paper history periodically when visible
 setInterval(()=>{if(paperHistoryVisible)loadPaperHistory();},5000);
 
@@ -1809,10 +1928,12 @@ setInterval(updatePaper,3000);
 setInterval(update,2000);
 setInterval(updatePaperEquity,3000);
 setInterval(updateLiveTrading, 3000);
+setInterval(updateHTF, 15000); // Update HTF every 15s
 update();
 updatePaper();
 checkLiveConfig();
 updateLiveTrading();
+updateHTF();
 
 update();
 </script>

@@ -1,5 +1,6 @@
 /**
  * Trading Environment - RL interface
+ * State, action, reward for DQN agent
  */
 
 class TradingEnvironment {
@@ -28,11 +29,23 @@ class TradingEnvironment {
     }
 
     getState() {
-        const window = this.candles.slice(Math.max(0, this.step - this.windowSize), this.step);
+        const window = this.candles.slice(
+            Math.max(0, this.step - this.windowSize),
+            this.step
+        );
+        const price = this.currentPrice();
+        const avgPrice = window.reduce((a, c) => a + c.close, 0) / window.length;
+        
         return {
-            candles: window.map(c => [c.open, c.high, c.low, c.close, c.volume]).flat(),
+            // Normalized OHLCV
+            open: window.map(c => c.open / price),
+            high: window.map(c => c.high / price),
+            low: window.map(c => c.low / price),
+            close: window.map(c => c.close / price),
+            volume: window.map(c => c.volume / this.avgVolume()),
+            // Position info
             position: this.position,
-            unrealizedPnl: this.position ? (this.currentPrice() - this.entryPrice) / this.entryPrice : 0,
+            unrealizedPnl: this.position ? (price - this.entryPrice) / this.entryPrice : 0,
             timeSinceTrade: this.step - (this.trades.length > 0 ? this.trades[this.trades.length - 1].step : 0)
         };
     }
@@ -41,34 +54,43 @@ class TradingEnvironment {
         return this.candles[this.step]?.close || 0;
     }
 
-    step(action) {
-        const price = this.currentPrice();
-        const prevBalance = this.balance();
+    avgVolume() {
+        const window = this.candles.slice(
+            Math.max(0, this.step - this.windowSize),
+            this.step
+        );
+        return window.reduce((a, c) => a + c.volume, 0) / window.length || 1;
+    }
 
+    execute(action) {
+        const price = this.currentPrice();
+        const prevCapital = this.balance();
+        
         // Execute action
         if (action === 1 && this.position === 0) {
             // BUY
-            const quantity = (this.capital * 0.95) / price; // 95% of capital, 0.1% fee
-            this.btc = quantity;
+            this.btc = (this.capital * 0.95) / price;
             this.capital = this.capital * 0.05;
             this.position = 1;
             this.entryPrice = price;
-            this.trades.push({ step: this.step, action: 'BUY', price, quantity });
+            this.trades.push({ step: this.step, action: 'BUY', price });
         } else if (action === 2 && this.position === 1) {
             // SELL
             const pnl = (price - this.entryPrice) * this.btc;
             const fees = price * this.btc * this.fee;
             this.capital += this.btc * price - fees;
-            this.trades.push({ step: this.step, action: 'SELL', price, quantity: this.btc, pnl, fees });
+            this.trades.push({ step: this.step, action: 'SELL', price, pnl, fees });
             this.btc = 0;
             this.position = 0;
             this.entryPrice = 0;
         }
-
+        
         this.step++;
-        const reward = (this.balance() - prevBalance) / prevBalance;
+        const newPrice = this.currentPrice();
+        const newCapital = this.balance();
+        const reward = (newCapital - prevCapital) / prevCapital;
         const done = this.step >= this.candles.length - 1 || this.capital < 10;
-
+        
         return { reward, done };
     }
 

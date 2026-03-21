@@ -52,7 +52,7 @@ async function train() {
     
     // Init
     const env = new Env('BTCUSDT', 60);
-    const agent = new Agent(300, 3);
+    const agent = new Agent(312, 4); // stateSize=312, actionSize=4 (HOLD/LONG/SHORT/CLOSE)
     
     // Training
     console.log('🚀 Training (50 episodes)...\n');

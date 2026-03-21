@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 class DQNAgent {
-    constructor(stateSize = 300, actionSize = 3) {
+    constructor(stateSize = 312, actionSize = 4) {  // 312: 60*5(OHLCV) + 5(volume) + position features(6) + pnl(5) + volatility(3) + misc(3) + returns(4)
         this.stateSize = stateSize;
         this.actionSize = actionSize;
         
@@ -87,16 +87,31 @@ class DQNAgent {
     flattenState(state) {
         if (Array.isArray(state)) return state;
         const arrays = [];
+        // OHLCV data (60 candles * 5 = 300)
         if (state.open) arrays.push(...state.open);
         if (state.high) arrays.push(...state.high);
         if (state.low) arrays.push(...state.low);
         if (state.close) arrays.push(...state.close);
         if (state.volume) arrays.push(...state.volume);
-        // Scalar features
-        arrays.push(state.position || 0);
+        // Position one-hot (3)
+        arrays.push(state.positionFlat || 0);
+        arrays.push(state.positionLong || 0);
+        arrays.push(state.positionShort || 0);
+        // P&L (3)
         arrays.push(state.unrealizedPnl || 0);
+        arrays.push(state.realizedPnl || 0);
+        arrays.push(state.totalPnl || 0);
+        // Timing & volatility (6)
         arrays.push(state.timeSinceTrade || 0);
-        // Pad to exactly stateSize
+        arrays.push(state.atrPct || 0);
+        arrays.push(state.volatility || 0);
+        arrays.push(state.riskLevel || 0);
+        arrays.push(state.priceVsAvg || 0);
+        arrays.push(state.drawdown || 0);
+        // Recent returns momentum (4)
+        if (state.recentReturns) arrays.push(...state.recentReturns);
+        else arrays.push(0, 0, 0, 0);
+        // Pad or truncate to exactly stateSize
         while (arrays.length < this.stateSize) {
             arrays.push(0);
         }

@@ -375,9 +375,18 @@ async function backtest(episodes = 20) {
         
         let action;
         if (Math.random() < epsilonMin) {
-            action = Math.floor(Math.random() * 3);
+            action = Math.floor(Math.random() * 4);  // 0=HOLD, 1=LONG, 2=SHORT, 3=CLOSE
         } else {
-            action = rsi < 35 && testPos === 0 ? 1 : (rsi > 65 && testPos === 1 ? 2 : 0);
+            // Simple RSI-based signal (adapted for SHORT support)
+            if (testPos === 0) {
+                action = rsi < 35 ? 1 : (rsi > 65 ? 2 : 0); // LONG or SHORT from flat
+            } else if (testPos === 1) {
+                action = rsi > 65 ? 3 : 0; // CLOSE long
+            } else if (testPos === -1) {
+                action = rsi < 35 ? 3 : 0; // CLOSE short
+            } else {
+                action = 0;
+            }
         }
         
         if (action === 1 && testPos === 0) {
@@ -386,12 +395,30 @@ async function backtest(episodes = 20) {
             testEntry = price;
             testPos = 1;
             testTrades.push({ type: 'BUY', price, idx: step - 60 });
-        } else if (action === 2 && testPos === 1) {
-            const pnl = (price - testEntry) * testBtc * 0.999;
-            testBalance += testBtc * price * 0.999;
-            testTrades.push({ type: 'SELL', price, pnl, idx: step - 60 });
-            testBtc = 0;
-            testPos = 0;
+        } else if (action === 2 && testPos === 0) {
+            // SHORT: borrow and sell BTC
+            testBtc = (testBalance * 0.95) / price;  // Amount to short
+            testBalance = testBalance + (testBalance * 0.95) * 0.999; // USD from sale
+            testEntry = price;
+            testPos = -1;
+            testTrades.push({ type: 'SHORT', price, idx: step - 60 });
+        } else if (action === 3) {
+            if (testPos === 1) {
+                // CLOSE LONG
+                const pnl = (price - testEntry) * testBtc * 0.999;
+                testBalance += testBtc * price * 0.999;
+                testTrades.push({ type: 'SELL', price, pnl, idx: step - 60 });
+                testBtc = 0;
+                testPos = 0;
+            } else if (testPos === -1) {
+                // CLOSE SHORT: buy back BTC
+                const buybackCost = testBtc * price * 1.001; // Price * qty * (1+fee)
+                const shortPnl = (testEntry - price) * testBtc * 0.999;
+                testBalance = testBalance + shortPnl; // P&L from short
+                testTrades.push({ type: 'COVER', price, pnl: shortPnl, idx: step - 60 });
+                testBtc = 0;
+                testPos = 0;
+            }
         }
         
         const equity = testBalance + testBtc * price;

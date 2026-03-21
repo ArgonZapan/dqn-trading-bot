@@ -1,6 +1,8 @@
 /**
- * DQN Agent - Double DQN + PER + Dueling Networks
+ * DQN Agent with TensorFlow.js
  */
+const tf = require('@tensorflow/tfjs');
+
 class DQNAgent {
     constructor(stateSize = 300, actionSize = 3) {
         this.stateSize = stateSize;
@@ -12,10 +14,7 @@ class DQNAgent {
         this.epsilonMin = 0.01;
         this.epsilonDecay = 0.995;
         this.learningRate = 0.0005;
-        
-        // Simple network [state -> 256 -> 128 -> actionSize]
-        this.onlineNet = this.createNetwork();
-        this.targetNet = this.createNetwork();
+        this.batchSize = 32;
         
         // Replay Buffer
         this.buffer = [];
@@ -23,106 +22,151 @@ class DQNAgent {
         
         // Training
         this.targetUpdateFreq = 100;
-        this.trainInterval = 4;
         this.steps = 0;
         this.episode = 0;
-        this.totalLoss = 0;
-        this.lossCount = 0;
+        
+        // Create models
+        this.onlineModel = this.createModel();
+        this.targetModel = this.createModel();
+        this.updateTargetModel();
+        
+        console.log('🤖 DQN Agent initialized with TensorFlow.js');
+        this.summary();
     }
 
-    createNetwork() {
-        // Simple 3-layer network: state -> 256 -> 128 -> action
-        const layerSizes = [this.stateSize, 256, 128, this.actionSize];
-        const weights = [];
-        const biases = [];
+    createModel() {
+        const model = tf.sequential();
         
-        for (let l = 0; l < layerSizes.length - 1; l++) {
-            const [fanIn, fanOut] = [layerSizes[l], layerSizes[l + 1]];
-            const limit = Math.sqrt(6 / (fanIn + fanOut));
-            weights.push(
-                Array.from({ length: fanOut }, () =>
-                    Array.from({ length: fanIn }, () => (Math.random() * 2 - 1) * limit)
-                )
-            );
-            biases.push(new Array(fanOut).fill(0));
-        }
+        model.add(tf.layers.dense({
+            inputShape: [this.stateSize],
+            units: 256,
+            activation: 'relu',
+            kernelInitializer: 'heNormal',
+            name: 'dense1'
+        }));
         
-        return { weights, biases, layerSizes };
+        model.add(tf.layers.dense({
+            units: 128,
+            activation: 'relu',
+            kernelInitializer: 'heNormal',
+            name: 'dense2'
+        }));
+        
+        model.add(tf.layers.dense({
+            units: 64,
+            activation: 'relu',
+            kernelInitializer: 'heNormal',
+            name: 'dense3'
+        }));
+        
+        model.add(tf.layers.dense({
+            units: this.actionSize,
+            activation: 'linear',
+            name: 'output'
+        }));
+        
+        model.compile({
+            optimizer: tf.train.adam(this.learningRate),
+            loss: 'meanSquaredError'
+        });
+        
+        return model;
     }
 
-    forward(state, net = this.onlineNet) {
-        let activations = state;
-        
-        for (let l = 0; l < net.weights.length; l++) {
-            const newActivations = [];
-            for (let i = 0; i < net.weights[l].length; i++) {
-                let sum = net.biases[l][i];
-                for (let j = 0; j < net.weights[l][i].length; j++) {
-                    sum += net.weights[l][i][j] * activations[j];
-                }
-                // ReLU activation (hidden layers)
-                newActivations.push(l < net.weights.length - 1 ? Math.max(0, sum) : sum);
-            }
-            activations = newActivations;
-        }
-        
-        return activations;
-    }
-
-    copyWeights() {
-        this.targetNet.weights = JSON.parse(JSON.stringify(this.onlineNet.weights));
-        this.targetNet.biases = JSON.parse(JSON.stringify(this.onlineNet.biases));
+    updateTargetModel() {
+        const weights = this.onlineModel.getWeights();
+        this.targetModel.setWeights(weights);
     }
 
     act(state) {
         if (Math.random() < this.epsilon) {
             return Math.floor(Math.random() * this.actionSize);
         }
-        const qValues = this.forward(state);
-        return qValues.indexOf(Math.max(...qValues));
+        
+        return tf.tidy(() => {
+            const stateTensor = tf.tensor2d([state]);
+            const prediction = this.onlineModel.predict(stateTensor);
+            stateTensor.dispose();
+            return prediction.argMax(1).dataSync()[0];
+        });
     }
 
     remember(state, action, reward, nextState, done) {
-        const entry = { state, action, reward, nextState, done };
-        this.buffer.push(entry);
-        if (this.buffer.length > this.bufferSize) this.buffer.shift();
+        this.buffer.push({ state, action, reward, nextState, done });
+        if (this.buffer.length > this.bufferSize) {
+            this.buffer.shift();
+        }
     }
 
-    replay() {
-        if (this.buffer.length < 32) return null;
+    async replay() {
+        if (this.buffer.length < this.batchSize) return null;
         
+        // Sample batch
         const batch = [];
-        for (let i = 0; i < 32; i++) {
+        for (let i = 0; i < this.batchSize; i++) {
             batch.push(this.buffer[Math.floor(Math.random() * this.buffer.length)]);
         }
         
-        let totalLoss = 0;
-        for (const exp of batch) {
-            const targetQ = this.forward(exp.state);
-            const nextQ = this.forward(exp.nextState, this.targetNet);
-            
-            if (exp.done) {
-                targetQ[exp.action] = exp.reward;
+        // Prepare data
+        const states = batch.map(e => e.state);
+        const nextStates = batch.map(e => e.nextState);
+        const actions = batch.map(e => e.action);
+        const rewards = batch.map(e => e.reward);
+        const dones = batch.map(e => e.done ? 1 : 0);
+        
+        // Calculate target Q values (outside tidy to avoid async issues)
+        const currentQsTensor = this.onlineModel.predict(tf.tensor2d(states));
+        const nextQsTensor = this.targetModel.predict(tf.tensor2d(nextStates));
+        
+        const currentQsData = await currentQsTensor.array();
+        const nextQsData = await nextQsTensor.array();
+        
+        // Double DQN: best action from online, Q value from target
+        const bestActions = currentQsTensor.argMax(1).dataSync();
+        const maxNextQs = nextQsTensor.max(1).dataSync();
+        
+        currentQsTensor.dispose();
+        nextQsTensor.dispose();
+        
+        // Build targets
+        for (let i = 0; i < batch.length; i++) {
+            const action = actions[i];
+            if (dones[i]) {
+                currentQsData[i][action] = rewards[i];
             } else {
-                const bestAction = targetQ.indexOf(Math.max(...targetQ));
-                targetQ[exp.action] = exp.reward + this.gamma * nextQ[bestAction];
+                currentQsData[i][action] = rewards[i] + this.gamma * maxNextQs[i];
             }
-            
-            totalLoss += Math.abs(targetQ[exp.action] - this.forward(exp.state)[exp.action]);
         }
+        
+        const targetQs = currentQsData;
+        
+        // Train
+        const loss = this.onlineModel.trainOnBatch(
+            tf.tensor2d(states),
+            tf.tensor2d(targetQs)
+        );
         
         // Update epsilon
         this.epsilon = Math.max(this.epsilonMin, this.epsilon * this.epsilonDecay);
         
+        // Update target network periodically
         if (this.steps % this.targetUpdateFreq === 0) {
-            this.copyWeights();
+            this.updateTargetModel();
         }
         
         this.steps++;
-        this.totalLoss += totalLoss / batch.length;
-        this.lossCount++;
-        
-        return totalLoss / batch.length;
+        return loss;
+    }
+
+    getQValues(state) {
+        return tf.tidy(() => {
+            const prediction = this.onlineModel.predict(tf.tensor2d([state]));
+            return prediction.dataSync();
+        });
+    }
+
+    summary() {
+        this.onlineModel.summary();
     }
 
     getMetrics() {
@@ -131,12 +175,28 @@ class DQNAgent {
             episode: this.episode,
             steps: this.steps,
             bufferSize: this.buffer.length,
-            avgLoss: this.lossCount > 0 ? this.totalLoss / this.lossCount : 0
+            totalParams: this.onlineModel.countParams()
         };
     }
 
     startEpisode() {
         this.episode++;
+    }
+
+    async save(path = './model') {
+        await this.onlineModel.save(`file://${path}`);
+        console.log(`💾 Model saved to ${path}`);
+    }
+
+    async load(path = './model') {
+        this.onlineModel = await tf.loadLayersModel(`file://${path}`);
+        this.updateTargetModel();
+        console.log(`📂 Model loaded from ${path}`);
+    }
+
+    dispose() {
+        this.onlineModel.dispose();
+        this.targetModel.dispose();
     }
 }
 

@@ -103,9 +103,16 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 </div>
 </div>
 <div class="card" style="margin-top:20px">
-<div class="card-header">📊 Wykres</div>
+<div class="card-header">📊 Wykres ostatniego epizodu</div>
 <div class="card-body">
-<div class="chart-placeholder">📈 Trading Chart Placeholder</div>
+<div style="position:relative;height:220px">
+<canvas id="episodeChart"></canvas>
+</div>
+<div style="display:flex;gap:16px;margin-top:12px;font-size:.7rem">
+<span style="color:var(--green)">● BUY</span>
+<span style="color:var(--red)">● SELL</span>
+<span style="color:var(--blue)">● Epsilon</span>
+</div>
 </div>
 </div>
 <div class="card" style="margin-top:20px">
@@ -198,8 +205,128 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 </div>
 </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 let trading=false;
+let chart=null;
+let chartData={prices:[],trades:[],epsilons:[]};
+
+function initChart(){
+  const ctx=document.getElementById('episodeChart').getContext('2d');
+  chart=new Chart(ctx,{
+    type:'line',
+    data:{
+      labels:[],
+      datasets:[
+        {
+          label:'Cena BTC',
+          data:[],
+          borderColor:'#f7931a',
+          backgroundColor:'rgba(247,147,26,.1)',
+          fill:true,
+          tension:.3,
+          pointRadius:0,
+          borderWidth:2,
+          yAxisID:'y'
+        },
+        {
+          label:'BUY',
+          data:[],
+          borderColor:'#3fb950',
+          backgroundColor:'#3fb950',
+          pointStyle:'triangle',
+          pointRadius:8,
+          pointHoverRadius:10,
+          showLine:false,
+          yAxisID:'y',
+          type:'scatter'
+        },
+        {
+          label:'SELL',
+          data:[],
+          borderColor:'#f85149',
+          backgroundColor:'#f85149',
+          pointStyle:'triangle',
+          pointRadius:8,
+          pointHoverRadius:10,
+          showLine:false,
+          yAxisID:'y',
+          type:'scatter'
+        },
+        {
+          label:'Epsilon',
+          data:[],
+          borderColor:'#58a6ff',
+          backgroundColor:'rgba(88,166,255,.5)',
+          fill:false,
+          tension:.3,
+          pointRadius:0,
+          borderWidth:1.5,
+          borderDash:[5,5],
+          yAxisID:'y2'
+        }
+      ]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'#1c2128',
+          borderColor:'#30363d',
+          borderWidth:1,
+          titleColor:'#c9d1d9',
+          bodyColor:'#8b949e',
+          padding:12
+        }
+      },
+      scales:{
+        x:{
+          display:false,
+          grid:{display:false}
+        },
+        y:{
+          type:'linear',
+          display:true,
+          position:'left',
+          grid:{color:'rgba(48,54,61,.5)'},
+          ticks:{color:'#8b949e',font:{size:10}}
+        },
+        y2:{
+          type:'linear',
+          display:true,
+          position:'right',
+          min:0,
+          max:1,
+          grid:{display:false},
+          ticks:{color:'#58a6ff',font:{size:10},callback:v=>v.toFixed(2)}
+        }
+      }
+    }
+  });
+}
+
+async function updateChart(){
+  try {
+    const d=await fetch('/api/episode-data').then(r=>r.json());
+    chartData=d;
+    if(!chart)initChart();
+    const labels=d.prices.map(p=>p.step);
+    const priceData=d.prices.map(p=>p.price);
+    const buyData=d.trades.filter(t=>t.action==='BUY').map(t=>({x:t.step,y:t.price}));
+    const sellData=d.trades.filter(t=>t.action==='SELL').map(t=>({x:t.step,y:t.price}));
+    const epsData=d.epsilons.map(e=>({x:e.step,y:e.epsilon}));
+    chart.data.labels=labels;
+    chart.data.datasets[0].data=priceData;
+    chart.data.datasets[1].data=buyData;
+    chart.data.datasets[2].data=sellData;
+    chart.data.datasets[3].data=epsData;
+    chart.update('none');
+  } catch(e){}
+}
+
 function log(msg,type='info'){
   const el=document.getElementById('logs');
   const d=document.createElement('div');
@@ -233,14 +360,26 @@ async function update(){
       document.getElementById('winRate').textContent=m.winRate.toFixed(1)+'%';
       document.getElementById('winRate').className=m.winRate>50?'metric-value green':'metric-value red';
     }
+    updateChart();
   } catch(e){log('API error: '+e.message,'sell')}
 }
-document.getElementById('startBtn').onclick=()=>{
-  trading=!trading;
+document.getElementById('startBtn').onclick=async()=>{
+  if(!trading){
+    const r=await fetch('/api/trading/start').then(x=>x.json());
+    if(r.success){
+      trading=true;
+      chartData={prices:[],trades:[],epsilons:[]};
+      if(chart){chart.destroy();chart=null}
+      log('Episode started - chart reset','system');
+    }
+  } else {
+    await fetch('/api/trading/stop').then(x=>x.json());
+    trading=false;
+    log('Trading stopped','info');
+  }
   const b=document.getElementById('startBtn');
   b.textContent=trading?'⏹ STOP':'▶ START TRADING';
   b.className=trading?'btn stop':'btn';
-  log(trading?'Trading started':'Trading stopped',trading?'buy':'info');
 };
 log('Dashboard loaded','system');
 setInterval(update,2000);

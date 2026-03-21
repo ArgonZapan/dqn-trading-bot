@@ -16,6 +16,12 @@ let trades = [];
 let tradingActive = false;
 let metrics = { epsilon: 1.0, episode: 0, bufferSize: 0, loss: 0, steps: 0 };
 
+// Episode tracking for chart
+let episodeTrades = [];      // { step, action, price, pnl }
+let episodePrices = [];      // { time, price } - price history for chart
+let currentEpisodeSteps = []; // price at each step for current episode
+let episodeEpsilons = [];     // epsilon values during episode
+
 // RL Components
 const Env = require('../src/environment');
 const Agent = require('../src/dqnAgent');
@@ -73,9 +79,23 @@ const server = http.createServer((req, res) => {
         return;
     }
     
+    if (url === '/api/episode-data') {
+        // Return episode chart data
+        res.end(JSON.stringify({
+            prices: currentEpisodeSteps,
+            trades: episodeTrades,
+            epsilons: episodeEpsilons
+        }));
+        return;
+    }
+    
     if (url === '/api/trading/start') {
         tradingActive = true;
         agent.startEpisode();
+        // Reset episode tracking
+        episodeTrades = [];
+        currentEpisodeSteps = [];
+        episodeEpsilons = [];
         res.end(JSON.stringify({ success: true }));
         return;
     }
@@ -131,14 +151,20 @@ function executeTrade(reason = 'agent') {
         portfolio.btc += quantity;
         portfolio.usdt *= 0.05;
         trades.push({ time: Date.now(), action: 'BUY', price: prices.btc, quantity });
+        episodeTrades.push({ step: metrics.steps, action: 'BUY', price: prices.btc, time: Date.now() });
     } else if (action === 2) { // SELL
         if (portfolio.btc > 0) {
             const pnl = (prices.btc - trades[trades.length-1]?.price || prices.btc) * portfolio.btc;
             portfolio.usdt += portfolio.btc * prices.btc * 0.999; // after fee
             trades.push({ time: Date.now(), action: 'SELL', price: prices.btc, quantity: portfolio.btc, pnl });
+            episodeTrades.push({ step: metrics.steps, action: 'SELL', price: prices.btc, pnl, time: Date.now() });
             portfolio.btc = 0;
         }
     }
+    
+    // Track episode prices for chart
+    currentEpisodeSteps.push({ step: metrics.steps, price: prices.btc, time: Date.now() });
+    episodeEpsilons.push({ step: metrics.steps, epsilon: agent.epsilon });
     
     // Store experience
     const newState = env.getState();

@@ -235,6 +235,29 @@ input[type="number"], input[type="text"], select {
   touch-action: manipulation;
 }
 
+/* Remove number input spinners on mobile */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Touch feedback for buttons */
+.btn:active, .bottom-nav-item:active {
+  transform: scale(0.97);
+  transition: transform .1s;
+}
+
+/* Swipe hint - desktop hidden, mobile only */
+.swipe-hint{display:none}
+@media(max-width:768px){
+  .swipe-hint{display:inline}
+  canvas{max-width:600px!important}
+}
+
 /* SMALL MOBILE - < 480px */
 @media(max-width:480px){
   .prices{grid-template-columns:1fr 1fr;gap:8px}
@@ -272,7 +295,7 @@ input[type="number"], input[type="text"], select {
   .paper-sltp-item input{width:100%;min-height:40px}
   .live-sl-tp-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
   .live-sl-tp-grid .sl-tp-item{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px}
-  .live-sl-tp-item label{display:block;font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px}
+  .live-sl-tp-grid .sl-tp-item label{display:block;font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px}
   #liveSL,#liveTP,#livePositionSize{width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600;min-height:44px}
   .live-btn-row{display:flex;gap:8px;margin-bottom:12px}
   .live-btn-row .btn{flex:1;min-height:48px;font-size:.85rem!important;font-weight:700}
@@ -630,8 +653,8 @@ Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
 <div id="paperHistoryList" style="font-size:.65rem"></div>
 </div>
 <div id="paperEquitySection" style="margin-top:12px;display:none">
-<div style="font-size:.65rem;color:var(--text2);margin-bottom:8px;text-transform:uppercase">Equity Curve</div>
-<div style="position:relative;height:120px">
+<div style="font-size:.65rem;color:var(--text2);margin-bottom:8px;text-transform:uppercase">Equity Curve <span class="swipe-hint" style="font-weight:400;font-size:.55rem;opacity:.7;display:inline">← swipe →</span></div>
+<div style="position:relative;height:120px;overflow-x:auto;-webkit-overflow-scrolling:touch">
 <canvas id="paperEquityChart"></canvas>
 </div>
 </div>
@@ -776,8 +799,8 @@ No active position
 <button class="btn" id="liveResetBtn" onclick="liveReset()" style="font-size:.7rem;padding:8px 12px;margin-top:8px;background:linear-gradient(135deg,var(--orange),#b35900)">🔄 RESET ACCOUNT</button>
 <div id="liveStatus" style="margin-top:8px;font-size:.65rem;color:var(--text2)">Status: Stopped</div>
 <div id="liveEquityChartSection" style="margin-top:12px;display:none">
-<div style="font-size:.65rem;color:var(--text2);margin-bottom:6px;text-transform:uppercase">Equity Curve</div>
-<div style="position:relative;height:80px">
+<div style="font-size:.65rem;color:var(--text2);margin-bottom:6px;text-transform:uppercase">Equity Curve <span class="swipe-hint" style="font-weight:400;font-size:.55rem;opacity:.7;display:inline">← swipe →</span></div>
+<div style="position:relative;height:80px;overflow-x:auto;-webkit-overflow-scrolling:touch">
 <canvas id="liveEquityChart"></canvas>
 </div>
 </div>

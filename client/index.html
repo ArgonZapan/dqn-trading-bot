@@ -598,6 +598,12 @@ document.getElementById('trainBtn').onclick=async()=>{
   b.textContent=trading?'⏹ STOP':'▶ TRAIN';
   b.className=trading?'btn stop':'btn';
 };
+document.getElementById('saveBtn').onclick=async()=>{
+  try{
+    const r=await fetch('/api/training/save').then(x=>x.json());
+    if(r.success){log('💾 Model saved!','system')}else{log('Save failed','error')}
+  }catch(e){log('Save error: '+e.message,'error')}
+};
 log('Dashboard loaded','system');
 // Paper Trading
 let paperActive=false;

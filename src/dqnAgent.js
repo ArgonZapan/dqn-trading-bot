@@ -80,13 +80,37 @@ class DQNAgent {
         this.targetModel.setWeights(weights);
     }
 
+    /**
+     * Flatten state object to array for TensorFlow
+     * Produces exactly stateSize (300) elements via padding if needed
+     */
+    flattenState(state) {
+        if (Array.isArray(state)) return state;
+        const arrays = [];
+        if (state.open) arrays.push(...state.open);
+        if (state.high) arrays.push(...state.high);
+        if (state.low) arrays.push(...state.low);
+        if (state.close) arrays.push(...state.close);
+        if (state.volume) arrays.push(...state.volume);
+        // Scalar features
+        arrays.push(state.position || 0);
+        arrays.push(state.unrealizedPnl || 0);
+        arrays.push(state.timeSinceTrade || 0);
+        // Pad to exactly stateSize
+        while (arrays.length < this.stateSize) {
+            arrays.push(0);
+        }
+        return arrays.slice(0, this.stateSize);
+    }
+
     act(state) {
         if (Math.random() < this.epsilon) {
             return Math.floor(Math.random() * this.actionSize);
         }
         
         return tf.tidy(() => {
-            const stateTensor = tf.tensor2d([state]);
+            const flat = this.flattenState(state);
+            const stateTensor = tf.tensor2d([flat], [1, flat.length]);
             const prediction = this.onlineModel.predict(stateTensor);
             stateTensor.dispose();
             return prediction.argMax(1).dataSync()[0];
@@ -109,16 +133,16 @@ class DQNAgent {
             batch.push(this.buffer[Math.floor(Math.random() * this.buffer.length)]);
         }
         
-        // Prepare data
-        const states = batch.map(e => e.state);
-        const nextStates = batch.map(e => e.nextState);
+        // Flatten states (critical: state objects must be flattened to arrays for TensorFlow)
+        const flatStates = batch.map(e => this.flattenState(e.state));
+        const flatNextStates = batch.map(e => this.flattenState(e.nextState));
         const actions = batch.map(e => e.action);
         const rewards = batch.map(e => e.reward);
         const dones = batch.map(e => e.done ? 1 : 0);
         
-        // Calculate target Q values (outside tidy to avoid async issues)
-        const currentQsTensor = this.onlineModel.predict(tf.tensor2d(states));
-        const nextQsTensor = this.targetModel.predict(tf.tensor2d(nextStates));
+        // Calculate target Q values
+        const currentQsTensor = this.onlineModel.predict(tf.tensor2d(flatStates, [flatStates.length, flatStates[0].length]));
+        const nextQsTensor = this.targetModel.predict(tf.tensor2d(flatNextStates, [flatNextStates.length, flatNextStates[0].length]));
         
         const currentQsData = await currentQsTensor.array();
         const nextQsData = await nextQsTensor.array();
@@ -144,7 +168,7 @@ class DQNAgent {
         
         // Train
         const loss = this.onlineModel.trainOnBatch(
-            tf.tensor2d(states),
+            tf.tensor2d(flatStates, [flatStates.length, flatStates[0].length]),
             tf.tensor2d(targetQs)
         );
         
@@ -162,7 +186,10 @@ class DQNAgent {
 
     getQValues(state) {
         return tf.tidy(() => {
-            const prediction = this.onlineModel.predict(tf.tensor2d([state]));
+            const flat = this.flattenState(state);
+            const stateTensor = tf.tensor2d([flat], [1, flat.length]);
+            const prediction = this.onlineModel.predict(stateTensor);
+            stateTensor.dispose();
             return prediction.dataSync();
         });
     }

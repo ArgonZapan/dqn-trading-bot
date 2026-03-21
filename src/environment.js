@@ -4,7 +4,7 @@
  */
 
 class TradingEnvironment {
-    constructor(pair = 'BTCUSDT', windowSize = 60) {
+    constructor(pair = 'BTCUSDT', windowSize = 59) {
         this.pair = pair;
         this.windowSize = windowSize;
         this.candles = [];

@@ -190,7 +190,7 @@ if (!fs.existsSync(MODELS_DIR)) fs.mkdirSync(MODELS_DIR, { recursive: true });
 const Env = require('../src/environment');
 const Agent = require('../src/dqnAgent');
 
-const env = new Env('BTCUSDT', 60);
+const env = new Env('BTCUSDT', 59);
 const agent = new Agent(300, 3);
 
 // Load last model if exists

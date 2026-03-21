@@ -57,6 +57,89 @@ let paperPositionSize = 0.95;
 let paperLastTradeTime = 0;
 const PAPER_TRADE_COOLDOWN = 30000; // 30s between trades
 
+// Alert tracking state
+let paperLastAlertBalance = 1000;
+let paperPeakEquity = 1000;
+let paperMaxDrawdownAlerted = 0; // track DD alert threshold (don't spam)
+
+// Milestone alerts (every 5% P&L change)
+const MILESTONE_STEP = 5; // %
+
+// Notifier (Telegram)
+let notifier = null;
+function getNotifier() {
+    if (!notifier) {
+        const token = process.env.TELEGRAM_BOT_TOKEN;
+        const chatId = process.env.TELEGRAM_CHAT_ID;
+        if (token && chatId) {
+            notifier = new (require('../src/notifier'))(token, chatId);
+        }
+    }
+    return notifier;
+}
+
+function sendPaperAlert(message) {
+    const n = getNotifier();
+    if (n) n.send(message);
+}
+
+// Paper trading milestone & DD alerts
+function checkPaperAlerts(currentEquity) {
+    const n = getNotifier();
+    if (!n) return;
+
+    const pnlPct = ((currentEquity - paperLastAlertBalance) / paperLastAlertBalance) * 100;
+    const milestoneCount = Math.floor(currentEquity / 1000);
+    const lastMilestone = Math.floor(paperLastAlertBalance / 1000);
+    const newMilestone = Math.floor(currentEquity / 1000);
+
+    // Balance milestone alert (every $1000 crossed)
+    if (newMilestone > lastMilestone && newMilestone >= 1) {
+        const emoji = currentEquity > paperLastAlertBalance ? '📈' : '📉';
+        n.send(`${emoji} <b>Paper Trading Milestone!</b>\n💰 Balance: <code>$${currentEquity.toFixed(2)}</code>\n📊 Total P&L: <code>${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</code>\n🏆 Milestone: $${newMilestone * 1000} passed!`);
+        paperLastAlertBalance = currentEquity;
+    }
+
+    // Drawdown alert
+    const peak = Math.max(paperPeakEquity, currentEquity);
+    if (currentEquity < peak) paperPeakEquity = peak;
+    const currentDD = paperPeakEquity > 0 ? ((paperPeakEquity - currentEquity) / paperPeakEquity) * 100 : 0;
+
+    // Alert on DD thresholds: 5%, 10%, 15%, 20%...
+    const ddThreshold = Math.floor(currentDD / 5) * 5;
+    if (ddThreshold > paperMaxDrawdownAlerted && ddThreshold >= 5) {
+        n.send(`⚠️ <b>Paper Trading - High Drawdown!</b>\n💰 Balance: <code>$${currentEquity.toFixed(2)}</code>\n📉 Drawdown: <code>${currentDD.toFixed(1)}%</code>\n📊 Peak: <code>$${paperPeakEquity.toFixed(2)}</code>`);
+        paperMaxDrawdownAlerted = ddThreshold;
+    }
+    // Reset DD alert when recovered
+    if (currentDD < 2) paperMaxDrawdownAlerted = 0;
+}
+
+// Training episode milestone alerts
+let lastAlertEpisodeBalance = 1000;
+let lastAlertEpisode = 0;
+
+function checkEpisodeAlerts(episodeNum, endEquity, pnlPct, tradesCount) {
+    const n = getNotifier();
+    if (!n) return;
+
+    // Alert every 10 completed episodes with significant P&L
+    if (episodeNum > lastAlertEpisode + 9) {
+        const emoji = pnlPct >= 0 ? '🟢' : '🔴';
+        n.send(`${emoji} <b>DQN Training Update</b>\n🎮 Episode: <code>#${episodeNum}</code>\n💰 Equity: <code>$${endEquity.toFixed(2)}</code>\n📈 P&L: <code>${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</code>\n📊 Trades: ${tradesCount}`);
+        lastAlertEpisode = episodeNum;
+        lastAlertEpisodeBalance = endEquity;
+    }
+
+    // Significant P&L milestone
+    const milestone = Math.floor(pnlPct / MILESTONE_STEP);
+    const lastMilestone = Math.floor(((lastAlertEpisodeBalance - 1000) / 1000) * 100 / MILESTONE_STEP);
+    if (milestone > lastMilestone && Math.abs(pnlPct) >= MILESTONE_STEP) {
+        n.send(`🎯 <b>Episode ${episodeNum} P&L Milestone!</b>\n💵 P&L: <code>${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</code>\n💰 Equity: <code>$${endEquity.toFixed(2)}</code>`);
+        lastAlertEpisodeBalance = endEquity;
+    }
+}
+
 // Model persistence config
 const MODEL_SAVE_INTERVAL_MS = parseInt(process.env.MODEL_SAVE_INTERVAL_MS || '600000'); // 10 min default
 
@@ -339,6 +422,9 @@ async function paperTradingStep() {
     });
     if (paperEquityCurve.length > MAX_EQUITY_CURVE) paperEquityCurve.shift();
     
+    // Check for milestone/drawdown alerts
+    checkPaperAlerts(totalEquity);
+    
     if (now - paperLastTradeTime < PAPER_TRADE_COOLDOWN) return;
     
     // Fetch fresh candles
@@ -580,6 +666,12 @@ const server = http.createServer(async (req, res) => {
         paperTrading.closedTrades = [];
         paperOpenPosition = null;
         updatePaperStats();
+        // Reset alert tracking
+        paperLastAlertBalance = 1000;
+        paperPeakEquity = 1000;
+        paperMaxDrawdownAlerted = 0;
+        lastAlertEpisodeBalance = 1000;
+        lastAlertEpisode = 0;
         console.log('📈 Paper Trading ENABLED');
         res.end(JSON.stringify({ success: true, enabled: true }));
         return;
@@ -856,6 +948,9 @@ async function trainingStep() {
             trades: completedTrades
         });
         if (episodeHistory.length > MAX_HISTORY) episodeHistory.shift();
+
+        // Send training update alert
+        checkEpisodeAlerts(agent.episode, endEquity, pnlPercent, completedTrades.length);
 
         agent.startEpisode();
         await saveModel();

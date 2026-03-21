@@ -15,6 +15,7 @@ let portfolio = { usdt: 1000, btc: 0, eth: 0, sol: 0 };
 let trades = [];
 let tradingActive = false;
 let trainingActive = false;
+let trainingStartTime = 0;
 let metrics = { epsilon: 1.0, episode: 0, bufferSize: 0, loss: 0, steps: 0, isTraining: false };
 let lastModelSave = 0;
 
@@ -362,7 +363,8 @@ const server = http.createServer(async (req, res) => {
     }
     
     if (url === '/api/metrics') {
-        res.end(JSON.stringify({...agent.getMetrics(), isTraining: trainingActive}));
+        const trainingDuration = trainingActive ? Date.now() - trainingStartTime : 0;
+        res.end(JSON.stringify({...agent.getMetrics(), isTraining: trainingActive, trainingDurationMs: trainingDuration }));
         return;
     }
     
@@ -491,6 +493,7 @@ const server = http.createServer(async (req, res) => {
     if (url === '/api/training/start') {
         if (!trainingActive) {
             trainingActive = true;
+            trainingStartTime = Date.now();
             agent.startEpisode();
             episodeTrades = [];
             currentEpisodeSteps = [];

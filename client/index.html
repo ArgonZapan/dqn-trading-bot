@@ -203,6 +203,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 </div>
 </div>
 <div class="card" style="margin-top:16px">
+<div class="card-header">⏱️ Training Timer</div>
+<div class="card-body" style="text-align:center">
+<div id="trainingTimer" style="font-size:2rem;font-weight:700;color:var(--blue);font-family:'SF Mono',Monaco,monospace">00:00:00</div>
+<div id="trainingTimerLabel" style="font-size:.7rem;color:var(--text2);margin-top:6px">Idle</div>
+</div>
+</div>
+<div class="card" style="margin-top:16px">
 <div class="card-header">💼 Portfolio</div>
 <div class="card-body">
 <div class="metrics-grid">
@@ -545,6 +552,28 @@ async function update(){
     if(m.winRate!==undefined){
       document.getElementById('winRate').textContent=m.winRate.toFixed(1)+'%';
       document.getElementById('winRate').className=m.winRate>50?'metric-value green':'metric-value red';
+    }
+    // Training timer
+    if(m.trainingDurationMs!==undefined && m.trainingDurationMs>0){
+      const ms=m.trainingDurationMs;
+      const s=Math.floor(ms/1000)%60;
+      const min=Math.floor(ms/60000)%60;
+      const h=Math.floor(ms/3600000);
+      const timerEl=document.getElementById('trainingTimer');
+      const labelEl=document.getElementById('trainingTimerLabel');
+      if(timerEl && labelEl){
+        timerEl.textContent=`${h.toString().padStart(2,'0')}:${min.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+        labelEl.textContent=m.isTraining?'Training...':'Paused';
+        timerEl.style.color=m.isTraining?'var(--green)':'var(--orange)';
+      }
+    } else {
+      const timerEl=document.getElementById('trainingTimer');
+      const labelEl=document.getElementById('trainingTimerLabel');
+      if(timerEl && labelEl){
+        timerEl.textContent='00:00:00';
+        labelEl.textContent='Idle';
+        timerEl.style.color='var(--text2)';
+      }
     }
     updateChart();
     updateHistory();

@@ -5,8 +5,11 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "train": "node scripts/train.js"
+    "train": "node scripts/train.js",
+    "backtest": "node scripts/backtest.js",
+    "test": "node test.js"
   },
-  "keywords": ["trading", "dqn", "binance", "crypto"],
+  "keywords": ["trading", "dqn", "binance", "crypto", "reinforcement-learning"],
+  "author": "",
   "license": "MIT"
 }

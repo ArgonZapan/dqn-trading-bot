@@ -1,5 +1,5 @@
 /**
- * DQN Trading Bot - Main Server with RL
+ * DQN Trading Bot - Main Server with RL Training
  */
 const http = require('http');
 const fs = require('fs');
@@ -14,13 +14,20 @@ let prices = { btc: 0, eth: 0, sol: 0 };
 let portfolio = { usdt: 1000, btc: 0, eth: 0, sol: 0 };
 let trades = [];
 let tradingActive = false;
-let metrics = { epsilon: 1.0, episode: 0, bufferSize: 0, loss: 0, steps: 0 };
+let trainingActive = false;
+let metrics = { epsilon: 1.0, episode: 0, bufferSize: 0, loss: 0, steps: 0, isTraining: false };
+let lastModelSave = 0;
 
 // Episode tracking for chart
-let episodeTrades = [];      // { step, action, price, pnl }
-let episodePrices = [];      // { time, price } - price history for chart
-let currentEpisodeSteps = []; // price at each step for current episode
-let episodeEpsilons = [];     // epsilon values during episode
+let episodeTrades = [];
+let currentEpisodeSteps = [];
+let episodeEpsilons = [];
+let episodeEquity = [];
+let episodeStartBalance = 1000;
+
+// Models directory
+const MODELS_DIR = './models';
+if (!fs.existsSync(MODELS_DIR)) fs.mkdirSync(MODELS_DIR, { recursive: true });
 
 // RL Components
 const Env = require('../src/environment');
@@ -28,6 +35,37 @@ const Agent = require('../src/dqnAgent');
 
 const env = new Env('BTCUSDT', 60);
 const agent = new Agent(300, 3);
+
+// Load last model if exists
+async function loadLastModel() {
+    try {
+        const files = fs.readdirSync(MODELS_DIR).filter(f => f.startsWith('dqn-ep')).sort();
+        if (files.length > 0) {
+            const lastModel = files[files.length - 1];
+            const modelPath = path.join(MODELS_DIR, lastModel);
+            await agent.load(modelPath);
+            const episodeNum = parseInt(lastModel.match(/dqn-ep(\d+)/)?.[1] || '0');
+            agent.episode = episodeNum;
+            console.log(`📂 Loaded model: ${lastModel}`);
+            return true;
+        }
+    } catch(e) {
+        console.log('No previous model found, starting fresh');
+    }
+    return false;
+}
+
+// Save model
+async function saveModel() {
+    const now = Date.now();
+    if (now - lastModelSave < 10 * 60 * 1000) return; // Max every 10 min
+    lastModelSave = now;
+    
+    const filename = `dqn-ep${agent.episode}.json`;
+    const modelPath = path.join(MODELS_DIR, filename);
+    await agent.save(modelPath);
+    console.log(`💾 Model saved: ${filename}`);
+}
 
 // Fetch helper
 function fetchJSON(url) {
@@ -41,7 +79,7 @@ function fetchJSON(url) {
 }
 
 // API Server
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'application/json');
     
@@ -51,6 +89,7 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ 
             status: 'running', 
             tradingActive,
+            trainingActive,
             prices,
             portfolio,
             metrics: agent.getMetrics(),
@@ -70,7 +109,7 @@ const server = http.createServer((req, res) => {
     }
     
     if (url === '/api/metrics') {
-        res.end(JSON.stringify(agent.getMetrics()));
+        res.end(JSON.stringify({...agent.getMetrics(), isTraining: trainingActive}));
         return;
     }
     
@@ -80,35 +119,38 @@ const server = http.createServer((req, res) => {
     }
     
     if (url === '/api/episode-data') {
-        // Return episode chart data
         res.end(JSON.stringify({
             prices: currentEpisodeSteps,
             trades: episodeTrades,
-            epsilons: episodeEpsilons
+            epsilons: episodeEpsilons,
+            equity: episodeEquity
         }));
         return;
     }
     
-    if (url === '/api/trading/start') {
-        tradingActive = true;
-        agent.startEpisode();
-        // Reset episode tracking
-        episodeTrades = [];
-        currentEpisodeSteps = [];
-        episodeEpsilons = [];
-        res.end(JSON.stringify({ success: true }));
+    // Training controls
+    if (url === '/api/training/start') {
+        if (!trainingActive) {
+            trainingActive = true;
+            agent.startEpisode();
+            episodeTrades = [];
+            currentEpisodeSteps = [];
+            episodeEpsilons = [];
+            console.log('▶ Training started');
+        }
+        res.end(JSON.stringify({ success: true, trainingActive }));
         return;
     }
     
-    if (url === '/api/trading/stop') {
-        tradingActive = false;
-        res.end(JSON.stringify({ success: true }));
+    if (url === '/api/training/stop') {
+        trainingActive = false;
+        console.log('⏹ Training stopped');
+        res.end(JSON.stringify({ success: true, trainingActive }));
         return;
     }
     
-    if (url === '/api/trading/execute') {
-        // Manual trade
-        executeTrade('manual');
+    if (url === '/api/training/save') {
+        await saveModel();
         res.end(JSON.stringify({ success: true }));
         return;
     }
@@ -124,7 +166,68 @@ const server = http.createServer((req, res) => {
     res.end('Not Found');
 });
 
-// Trading logic
+// Training step
+async function trainingStep() {
+    if (!trainingActive) return;
+    
+    const state = env.getState();
+    const action = agent.act(state);
+    
+    // Execute action in environment
+    const prevBalance = env.getBalance().total;
+    const { state: newState, reward, done } = env.step(action);
+    
+    // Check for trade execution (BUY or SELL)
+    const tradesAfter = env.getTrades();
+    if (tradesAfter.length > episodeTrades.length) {
+        const newTrade = tradesAfter[tradesAfter.length - 1];
+        episodeTrades.push({
+            step: metrics.steps,
+            action: newTrade.action === 1 ? 'BUY' : 'SELL',
+            price: newTrade.price,
+            pnl: newTrade.pnl || 0,
+            quantity: newTrade.quantity
+        });
+    }
+    
+    // Calculate equity
+    const currentBalance = env.getBalance().total;
+    episodeEquity.push({
+        step: metrics.steps,
+        equity: currentBalance,
+        drawdown: ((episodeStartBalance - currentBalance) / episodeStartBalance) * 100
+    });
+    
+    // Reward based on balance change
+    const balanceReward = (currentBalance - prevBalance) / prevBalance;
+    const totalReward = reward + balanceReward * 0.1;
+    
+    agent.remember(state, action, totalReward, newState, done);
+    
+    // Train
+    const loss = await agent.replay();
+    if (loss !== null) metrics.loss = loss;
+    
+    // Track price and epsilon
+    currentEpisodeSteps.push({ step: metrics.steps, price: prices.btc, time: Date.now() });
+    episodeEpsilons.push({ step: metrics.steps, epsilon: agent.epsilon });
+    
+    // Episode end (every 100 steps)
+    if (done || (metrics.steps > 0 && metrics.steps % 100 === 0)) {
+        agent.startEpisode();
+        await saveModel();
+        episodeTrades = [];
+        currentEpisodeSteps = [];
+        episodeEpsilons = [];
+        episodeEquity = [];
+        episodeStartBalance = env.getBalance().total;
+    }
+    
+    metrics.bufferSize = agent.buffer.length;
+    metrics.steps++;
+}
+
+// Update prices
 async function updatePrices() {
     try {
         const [btc, eth, sol] = await Promise.all([
@@ -140,52 +243,13 @@ async function updatePrices() {
     } catch (e) {}
 }
 
-function executeTrade(reason = 'agent') {
-    if (!tradingActive || prices.btc === 0) return;
-    
-    const state = env.getState();
-    const action = agent.act(state);
-    
-    if (action === 1) { // BUY
-        const quantity = (portfolio.usdt * 0.95) / prices.btc;
-        portfolio.btc += quantity;
-        portfolio.usdt *= 0.05;
-        trades.push({ time: Date.now(), action: 'BUY', price: prices.btc, quantity });
-        episodeTrades.push({ step: metrics.steps, action: 'BUY', price: prices.btc, time: Date.now() });
-    } else if (action === 2) { // SELL
-        if (portfolio.btc > 0) {
-            const pnl = (prices.btc - trades[trades.length-1]?.price || prices.btc) * portfolio.btc;
-            portfolio.usdt += portfolio.btc * prices.btc * 0.999; // after fee
-            trades.push({ time: Date.now(), action: 'SELL', price: prices.btc, quantity: portfolio.btc, pnl });
-            episodeTrades.push({ step: metrics.steps, action: 'SELL', price: prices.btc, pnl, time: Date.now() });
-            portfolio.btc = 0;
-        }
-    }
-    
-    // Track episode prices for chart
-    currentEpisodeSteps.push({ step: metrics.steps, price: prices.btc, time: Date.now() });
-    episodeEpsilons.push({ step: metrics.steps, epsilon: agent.epsilon });
-    
-    // Store experience
-    const newState = env.getState();
-    const reward = (action === 1 || action === 2) ? 0.001 : 0;
-    agent.remember(state, action, reward, newState, false);
-    
-    // Train
-    const loss = agent.train();
-    if (loss !== null) metrics.loss = loss;
-    metrics.bufferSize = agent.buffer.size();
-}
-
-function tradingTick() {
-    if (!tradingActive) return;
-    executeTrade();
-}
-
 // Routes
 setInterval(updatePrices, 3000);
-setInterval(tradingTick, 5000);
+setInterval(trainingStep, 1000); // Training tick every second
 updatePrices();
+
+// Load last model on start
+loadLastModel();
 
 server.listen(PORT, HOST, () => {
     const nets = require('os').networkInterfaces();

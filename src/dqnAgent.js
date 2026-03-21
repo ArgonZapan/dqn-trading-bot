@@ -2,6 +2,8 @@
  * DQN Agent with TensorFlow.js
  */
 const tf = require('@tensorflow/tfjs');
+const path = require('path');
+const fs = require('fs');
 
 class DQNAgent {
     constructor(stateSize = 300, actionSize = 3) {
@@ -183,15 +185,45 @@ class DQNAgent {
         this.episode++;
     }
 
-    async save(path = './model') {
-        await this.onlineModel.save(`file://${path}`);
-        console.log(`💾 Model saved to ${path}`);
+    async save(filepath) {
+        const fullPath = path.resolve(filepath);
+        const weights = this.onlineModel.getWeights();
+        const data = weights.map(w => w.arraySync());
+        const meta = {
+            epsilon: this.epsilon,
+            episode: this.episode,
+            steps: this.steps,
+            stateSize: this.stateSize,
+            actionSize: this.actionSize
+        };
+        fs.writeFileSync(fullPath, JSON.stringify({ meta, weights: data }));
+        console.log(`💾 Model saved: ${fullPath}`);
     }
 
-    async load(path = './model') {
-        this.onlineModel = await tf.loadLayersModel(`file://${path}`);
+    async load(filepath) {
+        const fullPath = path.resolve(filepath);
+        if (!fs.existsSync(fullPath)) {
+            console.log('Model file not found:', fullPath);
+            return false;
+        }
+        const raw = JSON.parse(fs.readFileSync(fullPath));
+        const { meta, weights: weightData } = raw;
+        
+        // Rebuild model if needed
+        if (meta.stateSize !== this.stateSize || meta.actionSize !== this.actionSize) {
+            this.onlineModel = this.createModel();
+        }
+        
+        const weights = weightData.map(data => tf.tensor(data));
+        this.onlineModel.setWeights(weights);
         this.updateTargetModel();
-        console.log(`📂 Model loaded from ${path}`);
+        
+        this.epsilon = meta.epsilon || 1;
+        this.episode = meta.episode || 0;
+        this.steps = meta.steps || 0;
+        
+        console.log(`📂 Model loaded from ${fullPath} (episode ${this.episode})`);
+        return true;
     }
 
     dispose() {

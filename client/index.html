@@ -112,6 +112,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <span style="color:var(--green)">● BUY</span>
 <span style="color:var(--red)">● SELL</span>
 <span style="color:var(--blue)">● Epsilon</span>
+<span id="equityLegend" style="color:var(--purple);display:none">● Equity %</span>
 </div>
 </div>
 </div>
@@ -128,7 +129,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <div class="card">
 <div class="card-header">⚙️ Kontrola</div>
 <div class="card-body">
-<button class="btn" id="startBtn">▶ START TRADING</button>
+<div style="display:flex;gap:8px;margin-bottom:12px">
+<button class="btn" id="trainBtn">▶ TRAIN</button>
+<button class="btn stop" id="stopBtn" style="flex:1;display:none">⏹ STOP</button>
+</div>
+<button class="btn" id="saveBtn" style="background:linear-gradient(135deg,#a371f7,#8957e5);font-size:.75rem;padding:10px">💾 SAVE MODEL</button>
+<div id="trainStatus" style="margin-top:10px;font-size:.7rem;color:var(--text2)">Status: Idle</div>
 </div>
 </div>
 <div class="card" style="margin-top:16px">
@@ -209,7 +215,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <script>
 let trading=false;
 let chart=null;
-let chartData={prices:[],trades:[],epsilons:[]};
+let chartData={prices:[],trades:[],epsilons:[],equity:[]};
+let episodeStartEquity=1000;
 
 function initChart(){
   const ctx=document.getElementById('episodeChart').getContext('2d');
@@ -264,6 +271,17 @@ function initChart(){
           borderWidth:1.5,
           borderDash:[5,5],
           yAxisID:'y2'
+        },
+        {
+          label:'Equity %',
+          data:[],
+          borderColor:'#a371f7',
+          backgroundColor:'rgba(163,113,247,.1)',
+          fill:true,
+          tension:.3,
+          pointRadius:0,
+          borderWidth:2,
+          yAxisID:'y3'
         }
       ]
     },
@@ -302,6 +320,13 @@ function initChart(){
           max:1,
           grid:{display:false},
           ticks:{color:'#58a6ff',font:{size:10},callback:v=>v.toFixed(2)}
+        },
+        y3:{
+          type:'linear',
+          display:false,
+          position:'right',
+          min:0,
+          grid:{display:false}
         }
       }
     }
@@ -312,6 +337,7 @@ async function updateChart(){
   try {
     const d=await fetch('/api/episode-data').then(r=>r.json());
     chartData=d;
+    episodeStartEquity=d.equity&&d.equity.length>0?d.equity[0].equity:1000;
     if(!chart)initChart();
     const labels=d.prices.map(p=>p.step);
     const priceData=d.prices.map(p=>p.price);
@@ -323,6 +349,21 @@ async function updateChart(){
     chart.data.datasets[1].data=buyData;
     chart.data.datasets[2].data=sellData;
     chart.data.datasets[3].data=epsData;
+    chart.data.datasets[4].data=[];
+    if(d.equity&&d.equity.length>0){
+      const baseEquity=episodeStartEquity||1000;
+      const equityData=d.equity.map(e=>({x:e.step,y:((e.equity-baseEquity)/baseEquity)*100}));
+      chart.data.datasets[4].data=equityData;
+      chart.data.datasets[4]._metric='equity';
+      // Show y3 if equity data exists
+      chart.options.scales.y3.display=true;
+      chart.options.scales.y3.min=Math.min(...equityData.map(e=>e.y))-1;
+      chart.options.scales.y3.max=Math.max(...equityData.map(e=>e.y))+1;
+      // Add equity legend item
+      document.getElementById('equityLegend').style.display='';
+    } else {
+      chart.options.scales.y3.display=false;
+    }
     chart.update('none');
   } catch(e){}
 }
@@ -363,22 +404,23 @@ async function update(){
     updateChart();
   } catch(e){log('API error: '+e.message,'sell')}
 }
-document.getElementById('startBtn').onclick=async()=>{
+document.getElementById('trainBtn').onclick=async()=>{
   if(!trading){
-    const r=await fetch('/api/trading/start').then(x=>x.json());
+    const r=await fetch('/api/training/start').then(x=>x.json());
     if(r.success){
       trading=true;
-      chartData={prices:[],trades:[],epsilons:[]};
+      chartData={prices:[],trades:[],epsilons:[],equity:[]};
+      episodeStartEquity=1000;
       if(chart){chart.destroy();chart=null}
       log('Episode started - chart reset','system');
     }
   } else {
-    await fetch('/api/trading/stop').then(x=>x.json());
+    await fetch('/api/training/stop').then(x=>x.json());
     trading=false;
     log('Trading stopped','info');
   }
-  const b=document.getElementById('startBtn');
-  b.textContent=trading?'⏹ STOP':'▶ START TRADING';
+  const b=document.getElementById('trainBtn');
+  b.textContent=trading?'⏹ STOP':'▶ TRAIN';
   b.className=trading?'btn stop':'btn';
 };
 log('Dashboard loaded','system');

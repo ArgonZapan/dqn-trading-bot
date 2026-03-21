@@ -65,6 +65,44 @@ let paperLastAlertBalance = 1000;
 let paperPeakEquity = 1000;
 let paperMaxDrawdownAlerted = 0; // track DD alert threshold (don't spam)
 
+// ─── Live Trading State ─────────────────────────────────────────────────────
+let liveTrader = null;
+let liveTradingInterval = null;
+let liveLastTradeTime = 0;
+const LIVE_TRADE_COOLDOWN = 30000; // 30s between trades
+const LIVE_LOG_FILE = path.join(__dirname, '..', 'live-trades.log');
+
+function liveLog(...args) {
+    const msg = `[${new Date().toISOString()}] [LIVE] ${args.join(' ')}`;
+    console.log(msg);
+    try { fs.appendFileSync(LIVE_LOG_FILE, msg + '\n'); } catch(e) {}
+}
+
+function getLiveTrader() {
+    if (!liveTrader) {
+        const apiKey = process.env.BINANCE_API_KEY || '';
+        const apiSecret = process.env.BINANCE_API_SECRET || '';
+        const LiveTrader = require('../src/services/LiveTrader').LiveTrader;
+        liveTrader = new LiveTrader({
+            apiKey,
+            apiSecret,
+            symbol: 'BTCUSDT',
+            positionSize: 0.95,
+            stopLossPercent: 2.0,
+            takeProfitPercent: 4.0,
+            testMode: true
+        });
+    }
+    return liveTrader;
+}
+
+async function liveTradingStep() {
+    if (!liveTrader || !liveTrader.isEnabled()) return;
+    if (prices.btc === 0) return;
+    await liveTrader.checkAndExecuteSLTP();
+}
+
+
 // Milestone alerts (every 5% P&L change)
 const MILESTONE_STEP = 5; // %
 
@@ -979,6 +1017,226 @@ const server = http.createServer(async (req, res) => {
             telegramFallback: a.smsFallback,
             smtpHost: a.smtpHost || null,
             alertEmail: a.alertEmail || null
+        }));
+        return;
+    }
+
+    // ─── Live Trading API ─────────────────────────────────────────────────────
+
+    // GET /api/live-trading/status - get live trader status
+    if (url === '/api/live-trading/status') {
+        const lt = getLiveTrader();
+        res.end(JSON.stringify(lt.getStatus()));
+        return;
+    }
+
+    // POST /api/live-trading/start - start live trading (test or live mode)
+    if (url === '/api/live-trading/start') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+            try {
+                const data = JSON.parse(body || '{}');
+                const testMode = data.testMode !== false;
+                const lt = getLiveTrader();
+                lt.configure({
+                    apiKey: process.env.BINANCE_API_KEY || '',
+                    apiSecret: process.env.BINANCE_API_SECRET || '',
+                    symbol: data.symbol || 'BTCUSDT',
+                    positionSize: data.positionSize || 0.95,
+                    stopLossPercent: data.stopLoss || 2.0,
+                    takeProfitPercent: data.takeProfit || 4.0,
+                    testMode
+                });
+                await lt.enable(testMode);
+                if (!liveTradingInterval) {
+                    liveTradingInterval = setInterval(liveTradingStep, 3000);
+                }
+                liveLog(`Live trading STARTED (testMode=${testMode})`);
+                const n = getNotifier();
+                if (n) {
+                    n.send(`🚀 <b>Live Trading ${testMode ? 'TEST' : 'LIVE'} Started!</b>\nSymbol: <code>${lt.getSymbol()}</code>\nMode: <code>${testMode ? 'TESTNET' : 'LIVE - REAL MONEY'}</code>`);
+                }
+                res.end(JSON.stringify({ success: true, status: lt.getStatus() }));
+            } catch(e) {
+                liveLog('Start failed:', e.message);
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: e.message }));
+            }
+        });
+        return;
+    }
+
+    // POST /api/live-trading/stop - stop live trading
+    if (url === '/api/live-trading/stop') {
+        const lt = getLiveTrader();
+        // Close open positions
+        const status = lt.getStatus();
+        if (status.hasPosition) {
+            await lt.closeLong('MANUAL_CLOSE');
+            await lt.closeShort('MANUAL_CLOSE');
+        }
+        lt.disable();
+        if (liveTradingInterval) { clearInterval(liveTradingInterval); liveTradingInterval = null; }
+        liveLog('Live trading STOPPED');
+        const n = getNotifier();
+        if (n) n.send('🛑 <b>Live Trading Stopped</b>\nAll positions closed.');
+        res.end(JSON.stringify({ success: true }));
+        return;
+    }
+
+    // GET /api/live-trading/stats - get trading stats
+    if (url === '/api/live-trading/stats') {
+        const lt = getLiveTrader();
+        res.end(JSON.stringify(lt.getStats()));
+        return;
+    }
+
+    // POST /api/live-trading/open-long - open a long position
+    if (url === '/api/live-trading/open-long') {
+        const lt = getLiveTrader();
+        if (!lt.isEnabled()) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Live trading not enabled' }));
+            return;
+        }
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+            const data = JSON.parse(body || '{}');
+            const pos = await lt.openLong(data.quantity);
+            if (pos) {
+                liveLog(`OPEN LONG: ${pos.quantity.toFixed(6)} @ $${pos.entryPrice.toLocaleString()}`);
+                const n = getNotifier();
+                if (n) n.send(`📈 <b>Live LONG Opened</b>\nQty: <code>${pos.quantity.toFixed(6)}</code> BTC\nEntry: <code>$${pos.entryPrice.toLocaleString()}</code>\nSL: <code>$${pos.stopLoss.toFixed(2)}</code> | TP: <code>$${pos.takeProfit.toFixed(2)}</code>`);
+                res.end(JSON.stringify({ success: true, position: pos }));
+            } else {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: 'Failed to open position' }));
+            }
+        });
+        return;
+    }
+
+    // POST /api/live-trading/close-long - close long position
+    if (url === '/api/live-trading/close-long') {
+        const lt = getLiveTrader();
+        if (!lt.isEnabled()) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Live trading not enabled' }));
+            return;
+        }
+        const trade = await lt.closeLong('MANUAL');
+        if (trade) {
+            liveLog(`CLOSE LONG: P&L $${(trade.pnl || 0).toFixed(2)} @ $${trade.price.toLocaleString()}`);
+            const n = getNotifier();
+            if (n) n.send(`📕 <b>Live LONG Closed</b>\nExit: <code>$${trade.price.toLocaleString()}</code>\nP&L: <code>${(trade.pnl || 0) >= 0 ? '+' : ''}$${(trade.pnl || 0).toFixed(2)}</code>`);
+            res.end(JSON.stringify({ success: true, trade }));
+        } else {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'No position to close' }));
+        }
+        return;
+    }
+
+    // POST /api/live-trading/open-short - open short position
+    if (url === '/api/live-trading/open-short') {
+        const lt = getLiveTrader();
+        if (!lt.isEnabled()) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Live trading not enabled' }));
+            return;
+        }
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+            const data = JSON.parse(body || '{}');
+            const pos = await lt.openShort(data.quantity);
+            if (pos) {
+                liveLog(`OPEN SHORT: ${pos.quantity.toFixed(6)} @ $${pos.entryPrice.toLocaleString()}`);
+                const n = getNotifier();
+                if (n) n.send(`📉 <b>Live SHORT Opened</b>\nQty: <code>${pos.quantity.toFixed(6)}</code> BTC\nEntry: <code>$${pos.entryPrice.toLocaleString()}</code>\nSL: <code>$${pos.stopLoss.toFixed(2)}</code> | TP: <code>$${pos.takeProfit.toFixed(2)}</code>`);
+                res.end(JSON.stringify({ success: true, position: pos }));
+            } else {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: 'Failed to open position' }));
+            }
+        });
+        return;
+    }
+
+    // POST /api/live-trading/close-short - close short position
+    if (url === '/api/live-trading/close-short') {
+        const lt = getLiveTrader();
+        if (!lt.isEnabled()) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Live trading not enabled' }));
+            return;
+        }
+        const trade = await lt.closeShort('MANUAL');
+        if (trade) {
+            liveLog(`CLOSE SHORT: P&L $${(trade.pnl || 0).toFixed(2)} @ $${trade.price.toLocaleString()}`);
+            const n = getNotifier();
+            if (n) n.send(`📗 <b>Live SHORT Closed</b>\nExit: <code>$${trade.price.toLocaleString()}</code>\nP&L: <code>${(trade.pnl || 0) >= 0 ? '+' : ''}$${(trade.pnl || 0).toFixed(2)}</code>`);
+            res.end(JSON.stringify({ success: true, trade }));
+        } else {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'No position to close' }));
+        }
+        return;
+    }
+
+    // POST /api/live-trading/configure - update live trading settings
+    if (url === '/api/live-trading/configure') {
+        const lt = getLiveTrader();
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+            try {
+                const data = JSON.parse(body || '{}');
+                if (data.stopLoss) lt.setStopLoss(parseFloat(data.stopLoss));
+                if (data.takeProfit) lt.setTakeProfit(parseFloat(data.takeProfit));
+                if (data.positionSize) lt.setPositionSize(parseFloat(data.positionSize));
+                if (data.symbol) lt.setSymbol(data.symbol);
+                res.end(JSON.stringify({ success: true, status: lt.getStatus() }));
+            } catch(e) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: 'Invalid config' }));
+            }
+        });
+        return;
+    }
+
+    // GET /api/live-trading/history - get closed trades history
+    if (url === '/api/live-trading/history') {
+        const lt = getLiveTrader();
+        const stats = lt.getStats();
+        res.end(JSON.stringify({ trades: stats.closedTrades, total: stats.stats.totalTrades }));
+        return;
+    }
+
+    // POST /api/live-trading/reset - reset live trading state
+    if (url === '/api/live-trading/reset') {
+        const lt = getLiveTrader();
+        lt.reset();
+        liveLog('Live trading state RESET');
+        res.end(JSON.stringify({ success: true }));
+        return;
+    }
+
+    // GET /api/live-trading/config-check - verify API keys are configured
+    if (url === '/api/live-trading/config-check') {
+        const apiKey = process.env.BINANCE_API_KEY || '';
+        const apiSecret = process.env.BINANCE_API_SECRET || '';
+        const configured = !!(apiKey && apiSecret);
+        const lt = getLiveTrader();
+        res.end(JSON.stringify({
+            configured,
+            hasApiKey: !!apiKey,
+            hasApiSecret: !!apiSecret,
+            isConfigured: lt.isConfigured(),
+            isTestMode: lt.isTestMode(),
+            isEnabled: lt.isEnabled()
         }));
         return;
     }

@@ -319,6 +319,38 @@ function paperSignal(candles, ind) {
             // Optional: close positions when price returns to middle
             // if (price >= bbMiddle && price <= bbMiddle * 1.02) return 'CLOSE';
         }
+    } else if (paperStrategy === 'scalping') {
+        // Scalping: fast EMA crossover + RSI + volume confirmation
+        if (candles.length < 20 || !ind.ema9 || !ind.ema21) return 'HOLD';
+        
+        const closes = candles.map(c => c.close);
+        const volumes = candles.map(c => c.volume);
+        
+        // Fast EMA crossover (EMA5 vs EMA21)
+        const ema5 = calcEMA(closes, 5);
+        const ema5Prev = calcEMA(closes.slice(0, -1), 5);
+        const ema21 = ind.ema21;
+        const ema21Prev = calcEMA(closes.slice(0, -1), 21);
+        
+        const emaCrossUp = ema5 > ema21 && ema5Prev <= ema21Prev;
+        const emaCrossDown = ema5 < ema21 && ema5Prev >= ema21Prev;
+        
+        // Volume surge
+        const avgVol = volumes.slice(-20).reduce((a,b) => a+b, 0) / 20;
+        const volSurge = volumes[volumes.length-1] > avgVol * 1.5;
+        
+        // RSI
+        const rsi = ind.rsi || 50;
+        
+        // BUY: EMA cross up + RSI not overbought + volume
+        if (emaCrossUp && rsi < 65 && volSurge) return 'BUY';
+        
+        // SHORT: EMA cross down + RSI not oversold
+        if (emaCrossDown && rsi > 35) return 'SHORT';
+        
+        // Quick bounces
+        if (rsi < 25) return 'BUY';
+        if (rsi > 75) return 'SHORT';
     }
     return 'HOLD';
 }
@@ -798,7 +830,7 @@ const server = http.createServer(async (req, res) => {
     if (url === '/api/paper-trading/strategy') {
         const params = new URL(req.url, `http://${req.headers.host}`).searchParams;
         const strategy = params.get('strategy');
-        if (strategy && ['trend', 'momentum', 'macd', 'grid'].includes(strategy)) {
+        if (strategy && ['trend', 'momentum', 'macd', 'grid', 'scalping'].includes(strategy)) {
             paperStrategy = strategy;
             res.end(JSON.stringify({ success: true, strategy: paperStrategy }));
         } else {

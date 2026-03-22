@@ -1095,6 +1095,31 @@ function initLastEpisodeChart(){
           type:'scatter'
         },
         {
+          label:'SHORT',
+          data:[],
+          borderColor:'#f85149',
+          backgroundColor:'#f85149',
+          pointStyle:'triangle',
+          pointRadius:8,
+          pointHoverRadius:10,
+          showLine:false,
+          rotation:180,
+          yAxisID:'y',
+          type:'scatter'
+        },
+        {
+          label:'COVER',
+          data:[],
+          borderColor:'#3fb950',
+          backgroundColor:'#3fb950',
+          pointStyle:'triangle',
+          pointRadius:8,
+          pointHoverRadius:10,
+          showLine:false,
+          yAxisID:'y',
+          type:'scatter'
+        },
+        {
           label:'Equity %',
           data:[],
           borderColor:'#a371f7',
@@ -1219,21 +1244,25 @@ async function updateLastEpisode(){
     const epsilons=detail.epsilons||[];
     const buyData=trades.filter(t=>t.action==='BUY').map(t=>({x:t.step,y:t.price}));
     const sellData=trades.filter(t=>t.action==='SELL').map(t=>({x:t.step,y:t.price}));
+    const shortData=trades.filter(t=>t.action==='SHORT').map(t=>({x:t.step,y:t.price}));
+    const coverData=trades.filter(t=>t.action==='COVER').map(t=>({x:t.step,y:t.price}));
     // Use real prices if available, else step index for labels
     const hasRealPrices=prices.length>0;
     lastEpisodeChart.data.labels=hasRealPrices?prices.map(p=>p.step):trades.map(t=>t.step);
     lastEpisodeChart.data.datasets[0].data=hasRealPrices?prices.map(p=>({x:p.step,y:p.price})):buyData;
     lastEpisodeChart.data.datasets[1].data=buyData;
     lastEpisodeChart.data.datasets[2].data=sellData;
+    lastEpisodeChart.data.datasets[3].data=shortData;
+    lastEpisodeChart.data.datasets[4].data=coverData;
     // Equity % curve from real equity data
     if(equity.length>0){
       const baseEq=equity[0].equity||1000;
-      lastEpisodeChart.data.datasets[3].data=equity.map(e=>({x:e.step,y:((e.equity-baseEq)/baseEq)*100}));
+      lastEpisodeChart.data.datasets[5].data=equity.map(e=>({x:e.step,y:((e.equity-baseEq)/baseEq)*100}));
       lastEpisodeChart.options.scales.y2.display=true;
-      lastEpisodeChart.options.scales.y2.min=Math.min(...lastEpisodeChart.data.datasets[3].data.map(e=>e.y))-1;
-      lastEpisodeChart.options.scales.y2.max=Math.max(...lastEpisodeChart.data.datasets[3].data.map(e=>e.y))+1;
+      lastEpisodeChart.options.scales.y2.min=Math.min(...lastEpisodeChart.data.datasets[5].data.map(e=>e.y))-1;
+      lastEpisodeChart.options.scales.y2.max=Math.max(...lastEpisodeChart.data.datasets[5].data.map(e=>e.y))+1;
     } else {
-      lastEpisodeChart.data.datasets[3].data=[];
+      lastEpisodeChart.data.datasets[5].data=[];
       lastEpisodeChart.options.scales.y2.display=false;
     }
     lastEpisodeChart.update('none');
@@ -1298,16 +1327,16 @@ async function showEpisodeDetail(episode){
       <div class="modal-stat"><div class="label">Max DD</div><div class="value neg">${(d.maxDrawdown||0).toFixed(1)}%</div></div>
       <div class="modal-stat"><div class="label">Buy</div><div class="value buy">${d.buyCount||0}</div></div>
       <div class="modal-stat"><div class="label">Sell</div><div class="value sell">${d.sellCount||0}</div></div>
+      <div class="modal-stat"><div class="label">Short</div><div class="value sell">${d.shortCount||0}</div></div>
+      <div class="modal-stat"><div class="label">Cover</div><div class="value buy">${d.coverCount||0}</div></div>
       <div class="modal-stat"><div class="label">Epsilon</div><div class="value">${(d.finalEpsilon||1).toFixed(3)}</div></div>
-      <div class="modal-stat"><div class="label">Steps</div><div class="value">${d.steps||0}</div></div>
-      <div class="modal-stat"><div class="label">Start Balance</div><div class="value">$${(d.startEquity||0).toFixed(2)}</div></div>
-      <div class="modal-stat"><div class="label">End Balance</div><div class="value">$${(d.endEquity||0).toFixed(2)}</div></div>
     `;
     // Build trades table
     if(trades.length>0){
       let rows=`<div class="modal-trade header"><span>#</span><span>Action</span><span>Price</span><span>P&L</span></div>`;
       trades.forEach((t,i)=>{
-        const actionCls=t.action==='BUY'?'buy':'sell';
+        const isLong=(t.action==='BUY'||t.action==='COVER');
+        const actionCls=isLong?'buy':'sell';
         const pnl=t.pnl||0;
         const pnlStr=pnl>=0?'+'+pnl.toFixed(2):pnl.toFixed(2);
         rows+=`<div class="modal-trade"><span style="color:var(--text2)">${i+1}</span><span class="${actionCls}">${t.action}</span><span>$${Number(t.price).toLocaleString()}</span><span class="${pnl>=0?'pos':'neg'}">${pnlStr}</span></div>`;

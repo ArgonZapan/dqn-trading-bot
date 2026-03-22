@@ -914,6 +914,8 @@ const server = http.createServer(async (req, res) => {
             tradesCount: e.tradesCount,
             buyCount: e.buyCount,
             sellCount: e.sellCount,
+            shortCount: e.shortCount || 0,
+            coverCount: e.coverCount || 0,
             maxDrawdown: e.maxDrawdown,
             finalEpsilon: e.finalEpsilon,
             timestamp: e.timestamp
@@ -1769,6 +1771,8 @@ async function trainingStep() {
             tradesCount: completedTrades.length,
             buyCount: completedTrades.filter(t => t.action === 'BUY').length,
             sellCount: completedTrades.filter(t => t.action === 'SELL').length,
+            shortCount: completedTrades.filter(t => t.action === 'SHORT').length,
+            coverCount: completedTrades.filter(t => t.action === 'COVER').length,
             maxDrawdown,
             finalEpsilon: agent.epsilon,
             timestamp: Date.now(),

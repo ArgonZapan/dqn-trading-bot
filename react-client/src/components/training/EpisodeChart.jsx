@@ -5,51 +5,14 @@ import { endpoints } from '../../api/client';
 import { Card, LoadingSpinner } from '../common';
 
 /**
- * Convert raw tick data into proper OHLC candles grouped by tick count.
- * With 100ms tick interval, grouping by second gives one-tick-per-second
- * (open=high=low=close → zero body). Tick-count grouping fixes this.
- *
- * NOTE: Agent consistently selling (no BUY) is a DQN model issue, not a chart bug.
- *
- * @param {Array} ticks - raw tick array [{time, price, action, ...}]
- * @param {number} ticksPerCandle - how many ticks form one candle (default 10)
- */
-function ticksToCandles(ticks, ticksPerCandle = 10) {
-  if (!ticks?.length) return [];
-  const candles = [];
-  for (let i = 0; i < ticks.length; i += ticksPerCandle) {
-    const group = ticks.slice(i, i + ticksPerCandle);
-    if (group.length === 0) continue;
-    const prices = group
-      .map(t => t.close ?? t.price ?? t.open)
-      .filter(p => p > 0);
-    if (prices.length === 0) continue;
-
-    // Prefer trade action over HOLD
-    const actions = group.map(t => t.action).filter(a => a && a !== 'HOLD');
-
-    candles.push({
-      time: group[0].time,
-      open: prices[0],
-      high: Math.max(...prices),
-      low: Math.min(...prices),
-      close: prices[prices.length - 1],
-      action: actions.length > 0 ? actions[actions.length - 1] : 'HOLD',
-    });
-  }
-  return candles;
-}
-
-/**
  * Deduplicate timestamps — TradingView Lightweight Charts requires unique,
- * strictly ascending time values. With 100ms tick interval and tick-count
- * grouping, multiple candles can land on the same second.
+ * strictly ascending time values. Multiple ticks in the same second → add +1 offset.
  */
 function dedupeTimestamps(candles) {
   const seen = new Set();
   return candles.map(c => {
     let t = c.time;
-    while (seen.has(t)) t += 1; // +1s for duplicates
+    while (seen.has(t)) t += 1;
     seen.add(t);
     return { ...c, time: t };
   });
@@ -78,14 +41,19 @@ function extractMarkers(candles) {
 
 /**
  * Reusable CandlestickChart — renders one chart with candles + trade markers.
- * Candles come from ticksToCandles() grouped by tick count (OHLC).
+ * 1 tick = 1 świeca. Only deduplication of timestamps.
  */
 const CandlestickChart = memo(function CandlestickChart({ title, subtitle, candles, height = 280 }) {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
 
+  const processedCandles = useMemo(() => {
+    const raw = candles || [];
+    return dedupeTimestamps(raw);
+  }, [candles]);
+
   useEffect(() => {
-    if (!chartContainerRef.current || !candles?.length) return;
+    if (!chartContainerRef.current || !processedCandles?.length) return;
 
     // Cleanup previous chart
     if (chartRef.current) {
@@ -131,7 +99,7 @@ const CandlestickChart = memo(function CandlestickChart({ title, subtitle, candl
     });
 
     // Ensure candles have integer time (seconds, not ms)
-    const formattedCandles = candles.map(c => ({
+    const formattedCandles = processedCandles.map(c => ({
       time: typeof c.time === 'number' && c.time > 1e12 ? Math.floor(c.time / 1000) : c.time,
       open: c.open,
       high: c.high,
@@ -142,7 +110,7 @@ const CandlestickChart = memo(function CandlestickChart({ title, subtitle, candl
     candlestickSeries.setData(formattedCandles);
 
     // Markers from candle.action field
-    const markers = extractMarkers(candles);
+    const markers = extractMarkers(processedCandles);
     if (markers.length > 0) {
       createSeriesMarkers(candlestickSeries, markers);
     }
@@ -164,12 +132,12 @@ const CandlestickChart = memo(function CandlestickChart({ title, subtitle, candl
       chart.remove();
       chartRef.current = null;
     };
-  }, [candles, height]);
+  }, [processedCandles, height]);
 
   return (
     <Card title={title}>
       {subtitle && <div className="episode-subtitle">{subtitle}</div>}
-      {candles?.length ? (
+      {processedCandles?.length ? (
         <>
           <div ref={chartContainerRef} style={{ width: '100%', height }} />
           <div className="chart-legend">
@@ -201,10 +169,9 @@ export function EpisodeCharts() {
 
   const rawCurrent = data?.currentEp?.candles || [];
   const rawPrev = data?.prevEp?.candles || [];
-  // currentEp (live): 5 ticków/świecę — szybsze odświeżanie
-  // prevEp (zakończony): 10 ticków/świecę — lepszy overview
-  const currentCandles = dedupeTimestamps(ticksToCandles(rawCurrent, 5));
-  const prevCandles = dedupeTimestamps(ticksToCandles(rawPrev, 10));
+  // 1 tick = 1 świeca, bez grupowania — tylko deduplikacja timestampów
+  const currentCandles = dedupeTimestamps(rawCurrent);
+  const prevCandles = dedupeTimestamps(rawPrev);
 
   const prevSubtitle = prevCandles.length > 0
     ? `Poprzedni epizod (${prevCandles.length} świec)`

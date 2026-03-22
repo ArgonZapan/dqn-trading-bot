@@ -41,6 +41,21 @@ function ticksToCandles(ticks, ticksPerCandle = 10) {
 }
 
 /**
+ * Deduplicate timestamps — TradingView Lightweight Charts requires unique,
+ * strictly ascending time values. With 100ms tick interval and tick-count
+ * grouping, multiple candles can land on the same second.
+ */
+function dedupeTimestamps(candles) {
+  const seen = new Set();
+  return candles.map(c => {
+    let t = c.time;
+    while (seen.has(t)) t += 1; // +1s for duplicates
+    seen.add(t);
+    return { ...c, time: t };
+  });
+}
+
+/**
  * Extract trade markers from candle action field.
  */
 function extractMarkers(candles) {
@@ -188,8 +203,8 @@ export function EpisodeCharts() {
   const rawPrev = data?.prevEp?.candles || [];
   // currentEp (live): 5 ticków/świecę — szybsze odświeżanie
   // prevEp (zakończony): 10 ticków/świecę — lepszy overview
-  const currentCandles = ticksToCandles(rawCurrent, 5);
-  const prevCandles = ticksToCandles(rawPrev, 10);
+  const currentCandles = dedupeTimestamps(ticksToCandles(rawCurrent, 5));
+  const prevCandles = dedupeTimestamps(ticksToCandles(rawPrev, 10));
 
   const prevSubtitle = prevCandles.length > 0
     ? `Poprzedni epizod (${prevCandles.length} świec)`

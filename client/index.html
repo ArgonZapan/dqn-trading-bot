@@ -406,8 +406,10 @@ input[type="number"] {
 <canvas id="lastEpisodeChart"></canvas>
 </div>
 <div style="display:flex;gap:16px;margin-top:12px;font-size:.7rem;margin-bottom:4px">
-<span style="color:var(--green)">● BUY</span>
-<span style="color:var(--red)">● SELL</span>
+<span style="color:var(--green)">▲ BUY</span>
+<span style="color:var(--red)">▼ SELL</span>
+<span style="color:var(--red)">▼ SHORT</span>
+<span style="color:var(--green)">▲ COVER</span>
 <span id="lastEquityLegend" style="color:var(--purple);display:none">● Equity %</span>
 </div>
 <div style="position:relative;height:60px;margin-top:6px">
@@ -1187,6 +1189,7 @@ function initLastEpisodeEpsilonChart(){
           min:0,
           max:1,
           grid:{color:'rgba(48,54,61,.4)'},
+          ticks:{color:'#8b949e',font:{size:9},maxTicksLimit:5}
           ticks:{color:'#8b949e',font:{size:9},stepSize:0.25}
         }
       }

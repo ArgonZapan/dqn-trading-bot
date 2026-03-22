@@ -16,6 +16,7 @@ const TRAILING_DISTANCE = 0.75; // % below peak price for trailing SL
 // Trade Journal
 const tradeJournal = require('../src/tradeJournal');
 const Rebalancer = require('../src/rebalancer');
+const { sentimentAnalyzer } = require('../src/sentimentAnalyzer');
 
 // State
 let prices = { btc: 0, eth: 0, sol: 0 };
@@ -1564,6 +1565,21 @@ const server = http.createServer(async (req, res) => {
     // Paper trading equity curve
     if (url === '/api/paper-trading/equity-curve') {
         res.end(JSON.stringify(paperEquityCurve));
+        return;
+    }
+
+    // GET /api/sentiment - Market Sentiment dla dashboard
+    if (url === '/api/sentiment') {
+        const urlParts = req.url.split('?');
+        const params = new URLSearchParams(urlParts[1] || '');
+        const keyword = params.get('keyword') || 'BTC';
+        // Async refresh and return
+        sentimentAnalyzer.getCombinedSentiment(keyword).then(() => {
+            res.json(sentimentAnalyzer.getDashboardData());
+        }).catch(err => {
+            console.error('[Sentiment] API error:', err.message);
+            res.status(500).json({ error: err.message });
+        });
         return;
     }
     

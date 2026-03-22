@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 class DQNAgent {
-    constructor(stateSize = 312, actionSize = 4) {  // 312: 60*5(OHLCV) + 5(volume) + position features(6) + pnl(5) + volatility(3) + misc(3) + returns(4)
+    constructor(stateSize = 313, actionSize = 4) {  // 313: 60*5(OHLCV) + 5(volume) + position features(6) + pnl(5) + volatility(3) + misc(3) + returns(4) + sentiment(1)
         this.stateSize = stateSize;
         this.actionSize = actionSize;
         
@@ -111,6 +111,8 @@ class DQNAgent {
         // Recent returns momentum (4)
         if (state.recentReturns) arrays.push(...state.recentReturns);
         else arrays.push(0, 0, 0, 0);
+        // Market sentiment (1) - znormalizowane 0-1 z sentimentAnalyzer
+        arrays.push(state.sentiment !== undefined ? state.sentiment : 0.5);
         // Pad or truncate to exactly stateSize
         while (arrays.length < this.stateSize) {
             arrays.push(0);

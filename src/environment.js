@@ -5,6 +5,7 @@
  */
 
 const { atr } = require('./indicators');
+const { sentimentAnalyzer } = require('./sentimentAnalyzer');
 
 class TradingEnvironment {
     constructor(pair = 'BTCUSDT', windowSize = 59) {
@@ -111,7 +112,9 @@ class TradingEnvironment {
             recentReturns: this.getRecentReturns(window),
             // Drawdown from session peak
             peakCapital: this.peakCapital || 1000,
-            drawdown: this.peakCapital > 0 ? Math.max(0, (this.peakCapital - this.balance(price)) / this.peakCapital) : 0
+            drawdown: this.peakCapital > 0 ? Math.max(0, (this.peakCapital - this.balance(price)) / this.peakCapital) : 0,
+            // Market sentiment (-1 do +1, znormalizowane do 0-1)
+            sentiment: sentimentAnalyzer.getStateFeature()
         };
     }
     

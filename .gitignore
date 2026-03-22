@@ -2,3 +2,9 @@ node_modules/
 .env
 *.log
 .DS_Store
+-e 
+# Test artifacts
+test-results/
+*.bak-reorg
+trade-journal.json
+models/dqn-ep2.json

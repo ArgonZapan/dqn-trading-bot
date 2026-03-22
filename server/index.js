@@ -2601,6 +2601,13 @@ const server = http.createServer(async (req, res) => {
         if (!trainingActive) {
             trainingActive = true;
             trainingStartTime = Date.now();
+            
+            // Load candles into environment
+            const klines = await fetchCandles('BTCUSDT', '1m', 200);
+            if (klines.length >= 50) {
+                env.reset(klines);
+            }
+            
             agent.startEpisode();
             episodeTrades = [];
             currentEpisodeSteps = [];
@@ -3148,6 +3155,14 @@ const server = http.createServer(async (req, res) => {
 // Training step
 async function trainingStep() {
     if (!trainingActive) return;
+    
+    // Refresh candles every 60 steps
+    if (metrics.steps > 0 && metrics.steps % 60 === 0) {
+        const fresh = await fetchCandles('BTCUSDT', '1m', 200);
+        if (fresh.length >= 50) {
+            env.reset(fresh);
+        }
+    }
     
     const state = env.getState();
     const action = agent.act(state);

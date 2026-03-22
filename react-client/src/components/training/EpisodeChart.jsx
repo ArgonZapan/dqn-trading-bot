@@ -11,7 +11,7 @@ export function EpisodeChart() {
   });
 
   if (isLoading) return <Card title="📊 Wykres epizodu"><LoadingSpinner /></Card>;
-  if (!data?.candles?.length) {
+  if (!data?.prices?.length) {
     return (
       <Card title="📊 Wykres ostatniego epizodu">
         <div className="chart-placeholder">Uruchom trening aby zobaczyć wykres</div>
@@ -19,15 +19,31 @@ export function EpisodeChart() {
     );
   }
 
-  const chartData = data.candles.map((c, i) => ({
-    step: i,
-    price: c.close,
-    buy: data.actions?.[i] === 1 ? c.close : null,
-    sell: data.actions?.[i] === 2 ? c.close : null,
-  }));
+  // Build chart data from prices + trades
+  const chartData = data.prices.map((p, i) => {
+    // Find if any trade happened at this step
+    const buyTrade = data.trades?.find(t => t.step === p.step && t.side === 'LONG' && t.type === 'BUY');
+    const sellTrade = data.trades?.find(t => t.step === p.step && (t.side === 'LONG' && t.type === 'SELL' || t.side === 'CLOSE'));
+    return {
+      step: i,
+      price: p.price,
+      buy: buyTrade ? p.price : null,
+      sell: sellTrade ? p.price : null,
+    };
+  });
+
+  const episode = data.episode || '?';
+  const lastEquity = data.equity?.[data.equity.length - 1]?.equity;
 
   return (
-    <Card title={`📊 Wykres epizodu #${data.episode || '?'}`}>
+    <Card title={`📊 Wykres epizodu #${episode}`}>
+      {lastEquity && (
+        <div className="episode-stats">
+          <span>Equity: <strong>${lastEquity.toFixed(2)}</strong></span>
+          <span>Steps: <strong>{data.prices.length}</strong></span>
+          <span>Trades: <strong>{data.trades?.length || 0}</strong></span>
+        </div>
+      )}
       <ResponsiveContainer width="100%" height={220}>
         <LineChart data={chartData}>
           <XAxis dataKey="step" tick={{ fontSize: 10, fill: '#8b949e' }} />
@@ -59,16 +75,16 @@ export function EpisodeHistoryList() {
 
   return (
     <Card title="📜 Historia epizodów">
-      {data?.episodes?.length ? (
+      {data?.length ? (
         <div className="episode-list">
-          {data.episodes.slice(-10).reverse().map((ep, i) => (
+          {data.slice(-10).reverse().map((ep, i) => (
             <div key={i} className="episode-row">
               <span>#{ep.episode}</span>
-              <span className={ep.reward >= 0 ? 'green' : 'red'}>
-                {ep.reward?.toFixed(2)}
+              <span className={ep.pnlPercent >= 0 ? 'green' : 'red'}>
+                {ep.pnlPercent?.toFixed(2) || '—'}%
               </span>
               <span className="text-muted">{ep.steps} steps</span>
-              <span className="text-muted">ε={ep.epsilon?.toFixed(3)}</span>
+              <span className="text-muted">{ep.tradesCount} trades</span>
             </div>
           ))}
         </div>

@@ -576,13 +576,14 @@ function fetchJSON(url) {
 function generateCandles(steps, targetCandleCount = 20) {
     if (steps.length < 2) return [];
     const totalTime = steps[steps.length - 1].time - steps[0].time;
-    const bucketSize = Math.max(1, Math.floor(totalTime / targetCandleCount / 1000)); // w sekundach
+    const bucketSizeMs = Math.max(100, Math.floor(totalTime / targetCandleCount)); // min 100ms
+    const startTime = steps[0].time;
     const buckets = {};
     for (const step of steps) {
         const t = step.time || Date.now();
-        const bucket = Math.floor(t / (bucketSize * 1000)) * bucketSize;
+        const bucket = Math.floor((t - startTime) / bucketSizeMs);
         if (!buckets[bucket]) {
-            buckets[bucket] = { time: bucket, open: step.price, high: step.price, low: step.price, close: step.price };
+            buckets[bucket] = { time: startTime + bucket * bucketSizeMs, open: step.price, high: step.price, low: step.price, close: step.price };
         } else {
             buckets[bucket].high = Math.max(buckets[bucket].high, step.price);
             buckets[bucket].low = Math.min(buckets[bucket].low, step.price);

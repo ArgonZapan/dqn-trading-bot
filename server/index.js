@@ -1251,11 +1251,30 @@ const server = http.createServer(async (req, res) => {
     }
     
     if (url === '/api/episode-data') {
+        // Build OHLCV candles from episode prices (group by 1-min buckets)
+        let candles = [];
+        if (currentEpisodeSteps.length > 0) {
+            const buckets = {};
+            for (const p of currentEpisodeSteps) {
+                const t = p.time || Date.now();
+                const bucketKey = Math.floor(t / 60000) * 60; // Unix seconds, 1-min bucket
+                if (!buckets[bucketKey]) {
+                    buckets[bucketKey] = { time: bucketKey, open: p.price, high: p.price, low: p.price, close: p.price };
+                } else {
+                    buckets[bucketKey].high = Math.max(buckets[bucketKey].high, p.price);
+                    buckets[bucketKey].low = Math.min(buckets[bucketKey].low, p.price);
+                    buckets[bucketKey].close = p.price;
+                }
+            }
+            candles = Object.values(buckets).sort((a, b) => a.time - b.time);
+        }
         res.end(JSON.stringify({
             prices: currentEpisodeSteps,
             trades: episodeTrades,
             epsilons: episodeEpsilons,
-            equity: episodeEquity
+            equity: episodeEquity,
+            candles,
+            episode: agent.episode
         }));
         return;
     }

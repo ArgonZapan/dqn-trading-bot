@@ -20,6 +20,7 @@ const { sentimentAnalyzer } = require('../src/sentimentAnalyzer');
 const VolatilityRegime = require('../src/volatilityRegime');
 const { MLFeatures } = require('../src/mlFeatures');
 const { calculateAttribution } = require('../src/attribution');
+const RiskManager = require('../src/risk');
 
 // State
 let prices = { btc: 0, eth: 0, sol: 0 };
@@ -68,6 +69,12 @@ let paperStrategy = 'trend';
 let htfState = { h1: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 }, h4: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 } };
 
 // ─── Volatility Regime State ────────────────────────────────────────────────
+const REBALANCE_ASSETS = ['BTC', 'ETH', 'SOL'];
+const REBALANCE_PAIRS = {
+    BTC: { symbol: 'BTCUSDT', name: 'Bitcoin', allocation: 0.40, color: '#F7931A' },
+    ETH: { symbol: 'ETHUSDT', name: 'Ethereum', allocation: 0.35, color: '#627EEA' },
+    SOL: { symbol: 'SOLUSDT', name: 'Solana', allocation: 0.25, color: '#00FFA3' }
+};
 const paperVolRegime = new VolatilityRegime();  // Per-asset regime instances
 const paperVolRegimes = {};  // { BTC: VolatilityRegime, ETH: VolatilityRegime, SOL: VolatilityRegime }
 for (const asset of REBALANCE_ASSETS) {
@@ -81,16 +88,12 @@ let paperLastTradeTime = 0;
 const PAPER_TRADE_COOLDOWN = 30000; // 30s between trades
 
 // ─── Multi-Asset Portfolio Rebalancing ──────────────────────────────────────
-const REBALANCE_PAIRS = {
-    BTC: { symbol: 'BTCUSDT', name: 'Bitcoin', allocation: 0.40, color: '#F7931A' },
-    ETH: { symbol: 'ETHUSDT', name: 'Ethereum', allocation: 0.35, color: '#627EEA' },
-    SOL: { symbol: 'SOLUSDT', name: 'Solana', allocation: 0.25, color: '#00FFA3' }
-};
-const REBALANCE_ASSETS = ['BTC', 'ETH', 'SOL'];
 let paperMultiPositions = {}; // { BTC: null|{side,entryPrice,quantity,fee,pnl,stopLoss,takeProfit,...}, ETH:..., SOL:... }
 let paperAllocation = { BTC: 0.40, ETH: 0.35, SOL: 0.25 }; // Target allocation
 let paperRebalanceEnabled = false;
 let paperRebalanceThreshold = 0.05; // Trigger rebalance if any asset drifts >5% from target
+let riskManager = new RiskManager(); // Kelly Criterion + dynamic stops
+riskManager.setJournal(tradeJournal);
 
 // Initialize multi positions
 for (const asset of REBALANCE_ASSETS) paperMultiPositions[asset] = null;
@@ -1689,10 +1692,12 @@ const server = http.createServer(async (req, res) => {
         res.json(insights);
         return;
     }
+    
+    // GET /api/sentiment/refresh - refresh sentiment data
+    if (url.startsWith('/api/sentiment/refresh')) {
         const urlParts = req.url.split('?');
         const params = new URLSearchParams(urlParts[1] || '');
         const keyword = params.get('keyword') || 'BTC';
-        // Async refresh and return
         sentimentAnalyzer.getCombinedSentiment(keyword).then(() => {
             res.json(sentimentAnalyzer.getDashboardData());
         }).catch(err => {
@@ -2405,6 +2410,63 @@ const server = http.createServer(async (req, res) => {
                 res.end(JSON.stringify({ error: e.message }));
             }
         });
+        return;
+    }
+
+    // ─── Risk Manager API ─────────────────────────────────────────────────────
+
+    // GET /api/risk/report - get comprehensive risk report with Kelly Criterion
+    if (url === '/api/risk/report') {
+        const currentPrice = prices.btc || 1000;
+        const report = riskManager.getRiskReport(paperTrading.capital, currentPrice * 0.01); // rough ATR estimate
+        res.end(JSON.stringify(report));
+        return;
+    }
+
+    // POST /api/risk/config - update risk parameters
+    if (url === '/api/risk/config' && method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+            try {
+                const config = JSON.parse(body || '{}');
+                if (config.maxPositionSize !== undefined) riskManager.maxPositionSize = config.maxPositionSize;
+                if (config.stopLossPercent !== undefined) riskManager.stopLossPercent = config.stopLossPercent;
+                if (config.takeProfitPercent !== undefined) riskManager.takeProfitPercent = config.takeProfitPercent;
+                if (config.kellyFraction !== undefined) riskManager.kellyFraction = config.kellyFraction;
+                if (config.useDynamicStops !== undefined) riskManager.useDynamicStops = config.useDynamicStops;
+                if (config.maxDailyLoss !== undefined) riskManager.maxDailyLoss = config.maxDailyLoss;
+                if (config.maxDrawdown !== undefined) riskManager.maxDrawdown = config.maxDrawdown;
+                if (config.maxConsecutiveLosses !== undefined) riskManager.maxConsecutiveLosses = config.maxConsecutiveLosses;
+                if (config.atrMultiplierSL !== undefined) riskManager.atrMultiplierSL = config.atrMultiplierSL;
+                if (config.atrMultiplierTP !== undefined) riskManager.atrMultiplierTP = config.atrMultiplierTP;
+                if (tradeJournal) riskManager.setJournal(tradeJournal);
+                res.end(JSON.stringify({ success: true, config: riskManager.getRiskReport(paperTrading.capital) }));
+            } catch(e) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: e.message }));
+            }
+        });
+        return;
+    }
+
+    // GET /api/risk/can-trade - check if trading is allowed
+    if (url === '/api/risk/can-trade') {
+        const result = riskManager.canTrade(paperTrading.capital);
+        res.end(JSON.stringify(result));
+        return;
+    }
+
+    // GET /api/risk/kelly - get Kelly Criterion recommendation
+    if (url === '/api/risk/kelly') {
+        const kelly = riskManager.calculateKelly();
+        const fractional = riskManager.getKellyPositionSize();
+        res.end(JSON.stringify({
+            kelly: kelly,
+            fractionalKelly: fractional,
+            kellyPercent: (kelly * 100).toFixed(2) + '%',
+            fractionalPercent: (fractional * 100).toFixed(2) + '%'
+        }));
         return;
     }
 

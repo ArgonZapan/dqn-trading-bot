@@ -500,6 +500,10 @@ let episodeEquity = [];
 let episodeStartBalance = 1000;
 let prevEpisode = 0;
 
+// New dual-array episode data (raw steps, bucketed on frontend)
+let currentEpSteps = []; // [{step, time, price, action, equity}]
+let prevEpData = [];     // copy from previous episode
+
 // Previous episode data (for "Poprzedni Epizod" chart)
 let prevEpisodeData = null; // { candles, trades, equity, episode, pnlPercent }
 
@@ -1276,28 +1280,27 @@ const server = http.createServer(async (req, res) => {
     }
     
     if (url === '/api/episode-data') {
-        // Build OHLCV candles from current episode prices (group by 5-second buckets)
-        let currentCandles = [];
-        if (currentEpisodeSteps.length > 0) {
-            const bucketSize = 5; // seconds
-            const buckets = {};
-            for (const p of currentEpisodeSteps) {
-                const t = p.time || Date.now();
-                const bucketKey = Math.floor(t / (bucketSize * 1000)) * bucketSize;
-                if (!buckets[bucketKey]) {
-                    buckets[bucketKey] = { time: bucketKey, open: p.price, high: p.price, low: p.price, close: p.price };
-                } else {
-                    buckets[bucketKey].high = Math.max(buckets[bucketKey].high, p.price);
-                    buckets[bucketKey].low = Math.min(buckets[bucketKey].low, p.price);
-                    buckets[bucketKey].close = p.price;
-                }
-            }
-            currentCandles = Object.values(buckets).sort((a, b) => a.time - b.time);
-        }
-
-        // Build currentEp and prevEp
+        // New format: return raw step arrays (frontend does bucketing)
         const currentEp = {
-            candles: currentCandles,
+            steps: currentEpSteps,
+            // Legacy fields for backward compat
+            candles: (() => {
+                if (currentEpisodeSteps.length === 0) return [];
+                const bucketSize = 5;
+                const buckets = {};
+                for (const p of currentEpisodeSteps) {
+                    const t = p.time || Date.now();
+                    const bucketKey = Math.floor(t / (bucketSize * 1000)) * bucketSize;
+                    if (!buckets[bucketKey]) {
+                        buckets[bucketKey] = { time: bucketKey, open: p.price, high: p.price, low: p.price, close: p.price };
+                    } else {
+                        buckets[bucketKey].high = Math.max(buckets[bucketKey].high, p.price);
+                        buckets[bucketKey].low = Math.min(buckets[bucketKey].low, p.price);
+                        buckets[bucketKey].close = p.price;
+                    }
+                }
+                return Object.values(buckets).sort((a, b) => a.time - b.time);
+            })(),
             trades: episodeTrades,
             equity: episodeEquity,
             prices: currentEpisodeSteps,
@@ -1305,24 +1308,33 @@ const server = http.createServer(async (req, res) => {
             episode: agent.episode
         };
 
-        const prevEp = prevEpisodeData ? {
+        const prevEp = prevEpData.length > 0 ? {
+            steps: prevEpData,
+            // Build candles from raw steps for legacy compat
+            candles: generateCandles(prevEpData, 20),
+            trades: prevEpisodeData?.trades || [],
+            equity: prevEpisodeData?.equity || [],
+            episode: prevEpisodeData?.episode ?? null,
+            pnlPercent: prevEpisodeData?.pnlPercent || 0
+        } : (prevEpisodeData ? {
+            // Fallback: if prevEpData is empty but prevEpisodeData has old format
+            steps: [],
             candles: prevEpisodeData.candles,
             trades: prevEpisodeData.trades,
             equity: prevEpisodeData.equity,
             episode: prevEpisodeData.episode,
             pnlPercent: prevEpisodeData.pnlPercent
-        } : { candles: [], trades: [], equity: [], episode: null, pnlPercent: 0 };
+        } : { steps: [], candles: [], trades: [], equity: [], episode: null, pnlPercent: 0 });
 
         res.end(JSON.stringify({
-            // New dual-chart format
             currentEp,
             prevEp,
-            // Legacy fields for backward compatibility
+            // Legacy top-level fields
             prices: currentEpisodeSteps,
             trades: episodeTrades,
             epsilons: episodeEpsilons,
             equity: episodeEquity,
-            candles: currentCandles,
+            candles: currentEp.candles,
             episode: agent.episode
         }));
         return;
@@ -2689,6 +2701,7 @@ const server = http.createServer(async (req, res) => {
             currentEpisodeSteps = [];
             episodeEpsilons = [];
             episodeEquity = [];
+            currentEpSteps = [];
             metrics.steps = 0; // Reset step counter for new training session
             console.log('▶ Training started');
             // Training start alert
@@ -3287,6 +3300,17 @@ async function trainingStep() {
     currentEpisodeSteps.push({ step: metrics.steps, price: prices.btc, time: Date.now() });
     episodeEpsilons.push({ step: metrics.steps, epsilon: agent.epsilon });
 
+    // New episode data for frontend bucketing
+    const epAction = action === 0 ? 'HOLD' : action === 1 ? 'BUY' : 'SELL';
+    const epTrade = tradesAfter.length > episodeTrades.length ? episodeTrades[episodeTrades.length - 1]?.action : null;
+    currentEpSteps.push({
+      step: metrics.steps,
+      time: Date.now(),
+      price: prices.btc,
+      action: epTrade || epAction,
+      equity: currentBalance
+    });
+
     metrics.bufferSize = agent.buffer.length;
     metrics.steps++;
 
@@ -3373,11 +3397,15 @@ async function trainingStep() {
             pnlPercent
         };
 
+        // New: copy raw steps to prevEpData for frontend bucketing
+        prevEpData = [...currentEpSteps];
+
         // Reset episode tracking state BEFORE starting new episode
         episodeTrades = [];
         currentEpisodeSteps = [];
         episodeEpsilons = [];
         episodeEquity = [];
+        currentEpSteps = [];
 
         // Fetch fresh candles for new episode
         const newCandles = await fetchCandles('BTCUSDT', '1m', 200);

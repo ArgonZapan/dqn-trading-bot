@@ -2196,8 +2196,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url === '/api/strategy/compare') {
-        const binance = require('../src/services/BinanceClient');
-        const client = new binance();
+        const { BinanceClient } = require('../src/services/BinanceClient');
+        const client = new BinanceClient();
         const { trendFollowing, meanReversion, momentum, macdCrossover } = require('../src/strategies');
         const { ScalpingStrategy } = require('../src/strategies/scalpingStrategy');
         const { GridStrategy } = require('../src/strategies/gridStrategy');
@@ -2387,7 +2387,7 @@ const server = http.createServer(async (req, res) => {
 
     // GET /api/backtest/scalping - Full scalping backtest with TP/SL/maxHoldTime
     if (url.startsWith('/api/backtest/scalping')) {
-        const binance = require('../src/services/BinanceClient');
+        const { BinanceClient } = require('../src/services/BinanceClient');
         const { backtestScalpingStrategy } = require('../src/strategies/scalpingStrategy');
         const urlParts = url.split('?');
         const query = new URLSearchParams(urlParts[1] || '');
@@ -2401,7 +2401,7 @@ const server = http.createServer(async (req, res) => {
         const maxHoldTime = parseInt(query.get('maxHoldTime')) || 900;
         const capital = parseFloat(query.get('capital')) || 1000;
 
-        const client = new binance();
+        const client = new BinanceClient();
         client.getKlines(pair, interval, candles).then(klines => {
             if (!klines || klines.length < 50) {
                 res.statusCode = 400;
@@ -2433,7 +2433,7 @@ const server = http.createServer(async (req, res) => {
 
     // GET /api/strategy/compare/chart - lightweight data for bar charts
     if (url === '/api/strategy/compare/chart') {
-        const binance = require('../src/services/BinanceClient');
+        const { BinanceClient } = require('../src/services/BinanceClient');
         const { trendFollowing, meanReversion, momentum, macdCrossover } = require('../src/strategies');
         const { ScalpingStrategy } = require('../src/strategies/scalpingStrategy');
         const { GridStrategy } = require('../src/strategies/gridStrategy');
@@ -2453,7 +2453,8 @@ const server = http.createServer(async (req, res) => {
         function runLightBacktest(strategyFn) {
             return new Promise(async (resolve) => {
                 try {
-                    const client = new binance();
+                    const { BinanceClient } = require('../src/services/BinanceClient');
+                    const client = new BinanceClient();
                     const klines = await client.getKlines('BTCUSDT', '5m', CANDLES);
                     if (!klines || klines.length < 50) { resolve(null); return; }
 

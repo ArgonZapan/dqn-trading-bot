@@ -2914,6 +2914,110 @@ function selectPaperStrategy(strategyId) {
         log(`📌 Strategy "${strategyId}" selected for Paper Trading (click to start)`, 'system');
     }
 }
+
+// ─── Trade Journal ─────────────────────────────────────────────────────────────
+let journalVisible = false;
+
+function toggleJournal() {
+    journalVisible = !journalVisible;
+    const body = document.getElementById('journalBody');
+    if (body) {
+        body.style.display = journalVisible ? 'block' : 'none';
+    }
+    if (journalVisible) {
+        updateJournal();
+    }
+}
+
+async function updateJournal() {
+    try {
+        const filter = document.getElementById('journalFilter');
+        const filterValue = filter ? filter.value : '';
+        
+        // Build query params
+        const params = new URLSearchParams();
+        if (filterValue === 'paper') params.set('isPaper', 'true');
+        if (filterValue === 'live') params.set('isPaper', 'false');
+        
+        // Fetch stats and trades in parallel
+        const [statsRes, tradesRes] = await Promise.all([
+            fetch('/api/trade-journal/stats?' + params.toString()),
+            fetch('/api/trade-journal?' + params.toString() + '&limit=50')
+        ]);
+        
+        const stats = await statsRes.json();
+        const tradesData = await tradesRes.json();
+        const items = tradesData.items || [];
+        
+        // Update stats grid
+        document.getElementById('journalTotalTrades').textContent = stats.totalTrades || 0;
+        document.getElementById('journalWinRate').textContent = (stats.winRate || 0) + '%';
+        document.getElementById('journalAvgPnl').textContent = (stats.avgPnl || 0) + '%';
+        
+        // Best/worst trade
+        if (stats.bestTrade && stats.bestTrade.pnlPercent !== undefined) {
+            const best = stats.bestTrade;
+            document.getElementById('journalBestTrade').textContent = '+' + best.pnlPercent.toFixed(2) + '%';
+            document.getElementById('journalBestTrade').className = 'metric-value green';
+        } else {
+            document.getElementById('journalBestTrade').textContent = '--';
+            document.getElementById('journalBestTrade').className = 'metric-value';
+        }
+        
+        if (stats.worstTrade && stats.worstTrade.pnlPercent !== undefined) {
+            const worst = stats.worstTrade;
+            document.getElementById('journalWorstTrade').textContent = worst.pnlPercent.toFixed(2) + '%';
+            document.getElementById('journalWorstTrade').className = 'metric-value red';
+        } else {
+            document.getElementById('journalWorstTrade').textContent = '--';
+            document.getElementById('journalWorstTrade').className = 'metric-value';
+        }
+        
+        document.getElementById('journalProfitFactor').textContent = stats.profitFactor || '--';
+        
+        // Render trades list
+        const list = document.getElementById('journalTradesList');
+        if (!list) return;
+        
+        if (items.length === 0) {
+            list.innerHTML = '<div style="color:var(--text2);text-align:center;padding:12px;font-size:.65rem">No trades yet</div>';
+            return;
+        }
+        
+        let html = '';
+        items.forEach(t => {
+            const pnl = t.pnlPercent || 0;
+            const pnlStr = pnl >= 0 ? '+' + pnl.toFixed(2) + '%' : pnl.toFixed(2) + '%';
+            const pnlCls = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+            const dirCls = t.direction === 'LONG' ? 'var(--green)' : 'var(--red)';
+            const dirSymbol = t.direction === 'LONG' ? '▲' : '▼';
+            const badge = t.isPaper ? '<span class="paper-badge">P</span>' : '<span class="transaction-badge live">L</span>';
+            const date = t.entryTime ? new Date(t.entryTime).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '--';
+            
+            html += `<div style="display:grid;grid-template-columns:20px 1fr 60px 70px;gap:6px;padding:6px 4px;border-bottom:1px solid var(--border);font-size:.6rem;align-items:center">
+                <span style="color:${dirCls};font-weight:700">${dirSymbol}</span>
+                <div>
+                    <div style="display:flex;align-items:center;gap:4px">
+                        <span style="font-weight:600;color:var(--text)">${t.symbol || 'BTCUSDT'}</span>
+                        ${badge}
+                    </div>
+                    <div style="color:var(--text2);font-size:.55rem">${date} · ${t.strategy || 'unknown'}</div>
+                </div>
+                <div style="text-align:right">
+                    <div style="color:${pnlCls};font-weight:600">${pnlStr}</div>
+                    <div style="color:var(--text2);font-size:.55rem">$${(t.pnlAbsolute || 0).toFixed(2)}</div>
+                </div>
+                <div style="text-align:right">
+                    <div style="font-size:.55rem;color:var(--text2)">${t.exitReason || '--'}</div>
+                </div>
+            </div>`;
+        });
+        
+        list.innerHTML = html;
+    } catch(e) {
+        console.error('updateJournal error:', e);
+    }
+}
 </script>
 <div id="episodeModal">
   <div class="modal-content">

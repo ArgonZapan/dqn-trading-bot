@@ -7,7 +7,9 @@
     "start": "node server/index.js",
     "train": "node scripts/train.js",
     "backtest": "node scripts/backtest.js",
-    "test": "node test.js"
+    "test": "node test.js",
+    "test:unit": "node node_modules/mocha/bin/mocha.js tests/**/*.test.js",
+    "test:watch": "node node_modules/mocha/bin/mocha.js tests/**/*.test.js --watch"
   },
   "keywords": [
     "trading",
@@ -26,7 +28,7 @@
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
-    "@types/jest": "^30.0.0",
-    "jest": "^30.3.0"
+    "@types/mocha": "^10.0.10",
+    "mocha": "^11.7.5"
   }
 }

@@ -1,59 +1,49 @@
 /**
- * Indicators Unit Tests
+ * Indicators Unit Tests (Mocha)
  */
-const { describe, test, expect } = require('@jest/globals');
+const assert = require('assert');
+const indicators = require('../src/indicators');
 
 describe('TechnicalIndicators', () => {
-    // Generate mock OHLCV data
-    const candles = Array.from({ length: 100 }, (_, i) => ({
-        time: Date.now() - (100 - i) * 60000,
-        open: 40000 + i * 10 + Math.random() * 100,
-        high: 40100 + i * 10 + Math.random() * 100,
-        low: 39900 + i * 10 + Math.random() * 100,
-        close: 40000 + i * 10 + Math.random() * 100,
-        volume: 100 + Math.random() * 50
-    }));
+    // Generate mock price data
+    const closes = Array.from({ length: 100 }, (_, i) => 40000 + i * 10 + Math.random() * 100);
+    const highs = Array.from({ length: 100 }, (_, i) => 40100 + i * 10 + Math.random() * 100);
+    const lows = Array.from({ length: 100 }, (_, i) => 39900 + i * 10 + Math.random() * 100);
 
-    const indicators = require('../src/indicators');
-
-    test('RSI should return value between 0 and 100', () => {
-        const rsi = indicators.rsi(candles, 14);
-        expect(typeof rsi).toBe('number');
-        expect(rsi).toBeGreaterThanOrEqual(0);
-        expect(rsi).toBeLessThanOrEqual(100);
+    it('RSI should return value between 0 and 100', () => {
+        const rsi = indicators.rsi(closes, 14);
+        assert(typeof rsi === 'number', 'RSI should be a number');
+        assert(rsi >= 0 && rsi <= 100, `RSI should be 0-100, got ${rsi}`);
     });
 
-    test('EMA should return positive number', () => {
-        const ema = indicators.ema(candles, 20);
-        expect(typeof ema).toBe('number');
-        expect(ema).toBeGreaterThan(0);
+    it('EMA should return positive number', () => {
+        const ema = indicators.ema(closes, 20);
+        assert(typeof ema === 'number', 'EMA should be a number');
+        assert(ema > 0, `EMA should be positive, got ${ema}`);
     });
 
-    test('MACD should return object with signal and histogram', () => {
-        const macd = indicators.macd(candles);
-        expect(macd).toHaveProperty('macd');
-        expect(macd).toHaveProperty('signal');
-        expect(macd).toHaveProperty('histogram');
+    it('MACD should return object with macd, signal and histogram', () => {
+        const macd = indicators.macd(closes);
+        assert(typeof macd.macd === 'number', 'MACD should have macd');
+        assert(typeof macd.signal === 'number', 'MACD should have signal');
+        assert(typeof macd.histogram === 'number', 'MACD should have histogram');
     });
 
-    test('Bollinger Bands should return object with upper, middle, lower', () => {
-        const bb = indicators.bb(candles, 20, 2);
-        expect(bb).toHaveProperty('upper');
-        expect(bb).toHaveProperty('middle');
-        expect(bb).toHaveProperty('lower');
-        expect(bb.upper).toBeGreaterThan(bb.middle);
-        expect(bb.middle).toBeGreaterThan(bb.lower);
+    it('Bollinger Bands should return upper > middle > lower', () => {
+        const bb = indicators.bollinger(closes, 20, 2);
+        assert(bb.upper > bb.middle, 'upper should be > middle');
+        assert(bb.middle > bb.lower, 'middle should be > lower');
     });
 
-    test('ATR should return positive value', () => {
-        const atrValue = indicators.atr(candles, 14);
-        expect(typeof atrValue).toBe('number');
-        expect(atrValue).toBeGreaterThan(0);
+    it('ATR should return positive value', () => {
+        const atrValue = indicators.atr(highs, lows, closes, 14);
+        assert(typeof atrValue === 'number', 'ATR should be a number');
+        assert(atrValue > 0, `ATR should be positive, got ${atrValue}`);
     });
 
-    test('should handle insufficient data gracefully', () => {
-        const shortCandles = candles.slice(0, 5);
-        const rsi = indicators.rsi(shortCandles, 14);
-        expect(rsi).toBe(50); // Default when not enough data
+    it('should handle insufficient data gracefully', () => {
+        const shortCloses = closes.slice(0, 5);
+        const rsi = indicators.rsi(shortCloses, 14);
+        assert.strictEqual(rsi, 50, 'RSI should return 50 for insufficient data');
     });
 });

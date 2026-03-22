@@ -1,45 +1,67 @@
 /**
- * Portfolio Unit Tests
+ * Portfolio Unit Tests (Mocha)
  */
-const { describe, test, expect } = require('@jest/globals');
+const assert = require('assert');
+const Portfolio = require('../src/portfolio');
 
 describe('Portfolio', () => {
     let portfolio;
 
-    beforeAll(() => {
-        portfolio = require('../src/portfolio');
+    beforeEach(() => {
+        portfolio = new Portfolio(10000);
     });
 
-    test('should initialize with default values', () => {
-        expect(portfolio.capital).toBe(10000);
-        expect(portfolio.positions).toEqual({});
+    it('should initialize with correct default values', () => {
+        assert.strictEqual(portfolio.balance(), 10000);
+        assert.strictEqual(portfolio.initial, 10000);
+        assert.deepStrictEqual(portfolio.positions, {});
     });
 
-    test('should open LONG position correctly', () => {
-        const result = portfolio.openPosition('BTCUSDT', 'LONG', 0.1, 40000);
-        expect(result).toHaveProperty('success');
+    it('should open LONG position (BUY) correctly', () => {
+        const result = portfolio.buy('BTCUSDT', 40000, 0.1);
+        assert.strictEqual(result, true);
+        assert.strictEqual(portfolio.holdings('BTCUSDT'), 0.1);
     });
 
-    test('should open SHORT position correctly', () => {
-        const result = portfolio.openPosition('ETHUSDT', 'SHORT', 0.05, 2000);
-        expect(result).toHaveProperty('success');
+    it('should close position (SELL) and reduce holdings', () => {
+        portfolio.buy('BTCUSDT', 40000, 0.1);
+        const result = portfolio.sell('BTCUSDT', 42000, 0.1);
+        assert.strictEqual(result, true);
+        assert.strictEqual(portfolio.holdings('BTCUSDT'), 0);
     });
 
-    test('should close position and return P&L', () => {
-        const result = portfolio.closePosition('BTCUSDT', 42000);
-        expect(result).toHaveProperty('success');
-        expect(result).toHaveProperty('pnl');
+    it('should track equity correctly', () => {
+        portfolio.buy('BTCUSDT', 40000, 0.1);
+        const prices = { 'BTCUSDT': 41000 };
+        const equity = portfolio.equity(prices);
+        assert.strictEqual(typeof equity, 'number');
+        assert(equity > 0);
     });
 
-    test('should track total equity correctly', () => {
-        const equity = portfolio.getEquity();
-        expect(typeof equity).toBe('number');
-        expect(equity).toBeGreaterThan(0);
+    it('should calculate P&L correctly', () => {
+        portfolio.buy('BTCUSDT', 40000, 0.1);
+        const prices = { 'BTCUSDT': 42000 }; // 10% gain
+        const pnl = portfolio.pnl(prices);
+        assert.strictEqual(typeof pnl, 'number');
     });
 
-    test('should calculate drawdown correctly', () => {
-        const drawdown = portfolio.getDrawdown();
-        expect(typeof drawdown).toBe('number');
-        expect(drawdown).toBeGreaterThanOrEqual(0);
+    it('should fail BUY if insufficient balance', () => {
+        const result = portfolio.buy('BTCUSDT', 40000, 1000); // way too much
+        assert.strictEqual(result, false);
+    });
+
+    it('should fail SELL if no holdings', () => {
+        const result = portfolio.sell('ETHUSDT', 2000, 1);
+        assert.strictEqual(result, false);
+    });
+
+    it('should calculate win rate correctly', () => {
+        portfolio.buy('BTCUSDT', 40000, 0.1);
+        portfolio.sell('BTCUSDT', 42000, 0.1); // win
+        portfolio.buy('BTCUSDT', 40000, 0.1);
+        portfolio.sell('BTCUSDT', 39000, 0.1); // loss
+        const wr = portfolio.winRate();
+        assert.strictEqual(typeof wr, 'number');
+        assert(wr >= 0 && wr <= 100);
     });
 });

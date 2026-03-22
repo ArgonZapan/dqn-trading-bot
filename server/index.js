@@ -21,6 +21,7 @@ const VolatilityRegime = require('../src/volatilityRegime');
 const { MLFeatures } = require('../src/mlFeatures');
 const { calculateAttribution } = require('../src/attribution');
 const RiskManager = require('../src/risk');
+const { BufferHealth } = require('../src/bufferHealth');
 
 // State
 let prices = { btc: 0, eth: 0, sol: 0 };
@@ -521,6 +522,7 @@ gridStrategy.GRID_SPACING = gridParams.gridSpacing;
 const env = new Env('BTCUSDT', 59);
 const agent = new Agent(394, 3);
 const hyperopt = new Hyperopt();
+const bufferHealth = new BufferHealth();
 const rebalancer = new Rebalancer({ enabled: false, threshold: 0.05 });
 const mlFeatures = new MLFeatures();
 
@@ -1843,6 +1845,12 @@ const server = http.createServer(async (req, res) => {
         return;
     }
     
+    // GET /api/buffer-health - Replay Buffer Health Monitor
+    if (url === '/api/buffer-health') {
+        res.json(bufferHealth.getDashboardData());
+        return;
+    }
+    
     // GET /api/sentiment/refresh - refresh sentiment data
     if (url.startsWith('/api/sentiment/refresh')) {
         const urlParts = req.url.split('?');
@@ -3112,6 +3120,11 @@ async function trainingStep() {
     // Store experience
     agent.remember(state, action, reward, newState, done);
     
+    // Track buffer health
+    const flatState = agent.flattenState ? agent.flattenState(state) : state;
+    bufferHealth.recordSample({ state: flatState, action, reward }, loss !== null ? Math.abs(loss) : null);
+    bufferHealth.updateBufferSize(agent.buffer?.length || 0, 10000);
+    
     // Train
     const loss = await agent.replay();
     if (loss !== null) metrics.loss = loss;
@@ -3189,6 +3202,10 @@ async function trainingStep() {
         };
         hyperopt.update(episodeHyperparams, episodeMetrics);
 
+        // Update buffer health with episode data
+        bufferHealth.recordEpisode(pnlPercent, metrics.steps);
+        bufferHealth.resetActionCounts();
+        
         // Reset episode tracking state BEFORE starting new episode
         episodeTrades = [];
         currentEpisodeSteps = [];

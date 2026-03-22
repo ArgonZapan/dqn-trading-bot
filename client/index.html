@@ -2342,6 +2342,180 @@ updateLiveTrading();
 updateHTF();
 
 update();
+
+// ─── Hyperparameter Optimizer Functions ─────────────────────────────────────
+let optimizerPolling = false;
+
+async function startOptimizer() {
+    try {
+        const r = await fetch('/api/optimizer/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                iterations: 50 // Ogranicz do 50 iteracji dla szybkości
+            })
+        }).then(x => x.json());
+        
+        if (r.success || r.status) {
+            log('🔬 Optymalizacja rozpoczęta!', 'system');
+            document.getElementById('optimizerStartBtn').style.display = 'none';
+            document.getElementById('optimizerStopBtn').style.display = 'block';
+            document.getElementById('optimizerStatus').textContent = 'Status: Trwa optymalizacja...';
+            document.getElementById('optimizerProgressSection').style.display = 'block';
+            
+            if (!optimizerPolling) {
+                optimizerPolling = true;
+                pollOptimizerStatus();
+            }
+        } else {
+            log('Błąd: ' + (r.error || 'Nieznany'), 'error');
+        }
+    } catch(e) {
+        log('Błąd startu optymalizacji: ' + e.message, 'error');
+    }
+}
+
+async function stopOptimizer() {
+    try {
+        await fetch('/api/optimizer/stop', { method: 'POST' }).then(x => x.json());
+        log('⏹ Wysłano sygnał zatrzymania optymalizacji', 'system');
+        document.getElementById('optimizerStopBtn').style.display = 'none';
+        document.getElementById('optimizerStartBtn').style.display = 'block';
+        document.getElementById('optimizerStatus').textContent = 'Status: Zatrzymywanna...';
+    } catch(e) {
+        log('Błąd zatrzymywania: ' + e.message, 'error');
+    }
+}
+
+async function pollOptimizerStatus() {
+    if (!optimizerPolling) return;
+    
+    try {
+        const status = await fetch('/api/optimizer/status').then(x => x.json());
+        
+        // Aktualizuj progress
+        const progress = status.progress || 0;
+        document.getElementById('optimizerProgressBar').style.width = progress + '%';
+        document.getElementById('optimizerProgressPct').textContent = progress + '%';
+        document.getElementById('optimizerProgressText').textContent = 
+            `${status.currentIndex || 0} / ${status.totalCombinations || 0} konfiguracji`;
+        
+        if (status.isRunning) {
+            document.getElementById('optimizerStatus').textContent = 
+                `Status: Trwa... (${status.currentIndex}/${status.totalCombinations}) ⭐ Score: ${(status.bestScore || 0).toFixed(3)}`;
+            setTimeout(pollOptimizerStatus, 2000);
+        } else {
+            // Optymalizacja zakończona
+            optimizerPolling = false;
+            document.getElementById('optimizerStopBtn').style.display = 'none';
+            document.getElementById('optimizerStartBtn').style.display = 'block';
+            document.getElementById('optimizerStatus').textContent = 'Status: Zakończona!';
+            log('✅ Optymalizacja zakończona! Best Score: ' + (status.bestScore || 0).toFixed(3), 'system');
+            
+            // Załaduj wyniki
+            await loadOptimizerResults();
+        }
+    } catch(e) {
+        console.error('Poll error:', e);
+        setTimeout(pollOptimizerStatus, 5000);
+    }
+}
+
+async function loadOptimizerResults() {
+    try {
+        const r = await fetch('/api/optimizer/results?top=5').then(x => x.json());
+        
+        if (!r.results || r.results.length === 0) {
+            document.getElementById('optimizerTopResults').innerHTML = 
+                '<div style="color:var(--text2);font-size:.65rem;text-align:center;padding:12px">Brak wyników</div>';
+            return;
+        }
+        
+        // Aktualizuj top 5
+        let html = '';
+        r.results.forEach((result, idx) => {
+            const m = result.metrics;
+            const p = result.params;
+            const scoreColor = idx === 0 ? 'var(--purple)' : idx === 1 ? 'var(--blue)' : 'var(--text2)';
+            const pnlColor = m.totalReturn >= 0 ? 'var(--green)' : 'var(--red)';
+            const ddColor = m.maxDrawdown < 10 ? 'var(--green)' : m.maxDrawdown < 30 ? 'var(--orange)' : 'var(--red)';
+            
+            html += `<div style="background:var(--bg);border-radius:10px;padding:10px;margin-bottom:8px;border:1px solid ${idx === 0 ? 'rgba(163,113,247,.3)' : 'var(--border)'}">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                    <span style="font-size:.7rem;font-weight:600;color:${scoreColor}">#${idx + 1} Score: ${result.combinedScore.toFixed(3)}</span>
+                    <span style="font-size:.6rem;color:var(--text2)">${result.tradesCount} trades</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:.55rem">
+                    <div>Return: <span style="font-weight:600;color:${pnlColor}">${m.totalReturn.toFixed(1)}%</span></div>
+                    <div>Sharpe: <span style="font-weight:600;color:${m.sharpeRatio >= 1 ? 'var(--green)' : 'var(--text)'}">${m.sharpeRatio.toFixed(2)}</span></div>
+                    <div>MaxDD: <span style="font-weight:600;color:${ddColor}">${m.maxDrawdown.toFixed(1)}%</span></div>
+                    <div>WinRate: <span style="font-weight:600">${m.winRate.toFixed(1)}%</span></div>
+                    <div>PF: <span style="font-weight:600">${m.profitFactor === Infinity ? '∞' : m.profitFactor.toFixed(2)}</span></div>
+                </div>
+                <div style="margin-top:6px;font-size:.5rem;color:var(--text2);display:flex;flex-wrap:wrap;gap:2px">
+                    <span style="background:var(--bg2);padding:2px 4px;border-radius:4px">LR:${p.learningRate}</span>
+                    <span style="background:var(--bg2);padding:2px 4px;border-radius:4px">ε:${p.epsilon}</span>
+                    <span style="background:var(--bg2);padding:2px 4px;border-radius:4px">γ:${p.gamma}</span>
+                    <span style="background:var(--bg2);padding:2px 4px;border-radius:4px">BS:${p.batchSize}</span>
+                    <span style="background:var(--bg2);padding:2px 4px;border-radius:4px">Mem:${p.memorySize}</span>
+                </div>
+            </div>`;
+        });
+        document.getElementById('optimizerTopResults').innerHTML = html;
+        
+        // Pokaż najlepsze params
+        if (r.bestParams) {
+            document.getElementById('optimizerBestSection').style.display = 'block';
+            document.getElementById('optimizerApplyBtn').style.display = 'block';
+            document.getElementById('bestLR').textContent = r.bestParams.learningRate;
+            document.getElementById('bestEps').textContent = r.bestParams.epsilon;
+            document.getElementById('bestGamma').textContent = r.bestParams.gamma;
+            document.getElementById('bestBS').textContent = r.bestParams.batchSize;
+            document.getElementById('bestMem').textContent = r.bestParams.memorySize;
+            document.getElementById('bestHL').textContent = r.bestParams.hiddenLayers ? 
+                JSON.stringify(r.bestParams.hiddenLayers) : '--';
+            document.getElementById('bestScore').textContent = (r.bestScore || 0).toFixed(3);
+        }
+    } catch(e) {
+        console.error('loadOptimizerResults error:', e);
+    }
+}
+
+async function applyBestParams() {
+    try {
+        const r = await fetch('/api/optimizer/apply-best', { method: 'POST' }).then(x => x.json());
+        if (r.success) {
+            log('✅ Zaaplikowano najlepsze parametry!', 'system');
+            log(`   LR=${r.appliedParams.learningRate}, ε=${r.appliedParams.epsilon}, γ=${r.appliedParams.gamma}, BS=${r.appliedParams.batchSize}`, 'system');
+        } else {
+            log('Błąd aplikacji: ' + (r.error || 'Brak parametrów'), 'error');
+        }
+    } catch(e) {
+        log('Błąd aplikacji: ' + e.message, 'error');
+    }
+}
+
+// Załaduj wyniki przy starcie
+loadOptimizerResults();
+
+// Poll optimizer status if was running
+async function checkOptimizerState() {
+    try {
+        const status = await fetch('/api/optimizer/status').then(x => x.json());
+        if (status.isRunning) {
+            document.getElementById('optimizerStartBtn').style.display = 'none';
+            document.getElementById('optimizerStopBtn').style.display = 'block';
+            document.getElementById('optimizerStatus').textContent = 'Status: Trwa optymalizacja...';
+            document.getElementById('optimizerProgressSection').style.display = 'block';
+            optimizerPolling = true;
+            pollOptimizerStatus();
+        } else if (status.resultsCount > 0) {
+            await loadOptimizerResults();
+        }
+    } catch(e) {}
+}
+
+setTimeout(checkOptimizerState, 1000);
 </script>
 <div id="episodeModal">
   <div class="modal-content">
@@ -2354,6 +2528,60 @@ update();
       <div class="modal-trades" id="modalTrades"></div>
     </div>
   </div>
+</div>
+
+<!-- Hyperparameter Optimizer Card -->
+<div class="card" style="margin-top:16px" id="optimizerCard">
+<div class="card-header">🔬 Hyperparameter Optimizer</div>
+<div class="card-body">
+<div style="display:flex;gap:8px;margin-bottom:12px">
+<button class="btn" id="optimizerStartBtn" onclick="startOptimizer()" style="font-size:.75rem;padding:10px 16px;background:linear-gradient(135deg,#a371f7,#8957e5)">🔬 OPTYMALIZUJ</button>
+<button class="btn stop" id="optimizerStopBtn" onclick="stopOptimizer()" style="font-size:.75rem;padding:10px 16px;display:none">⏹ STOP</button>
+<button class="btn" id="optimizerApplyBtn" onclick="applyBestParams()" style="font-size:.75rem;padding:10px 16px;background:linear-gradient(135deg,#3fb950,#2ea043);display:none">✅ APLIKUJ NAJLEPSZE</button>
+</div>
+
+<!-- Progress bar -->
+<div id="optimizerProgressSection" style="display:none;margin-bottom:12px">
+<div style="display:flex;justify-content:space-between;font-size:.65rem;color:var(--text2);margin-bottom:4px">
+<span id="optimizerProgressText">0 / 0 konfiguracji</span>
+<span id="optimizerProgressPct">0%</span>
+</div>
+<div class="bar-container" style="height:10px">
+<div class="bar blue" id="optimizerProgressBar" style="width:0%"></div>
+</div>
+</div>
+
+<!-- Status -->
+<div id="optimizerStatus" style="font-size:.65rem;color:var(--text2);margin-bottom:12px">Status: Idle</div>
+
+<!-- Top Results -->
+<div style="font-size:.65rem;color:var(--text2);margin-bottom:8px;text-transform:uppercase">Top 5 Konfiguracji</div>
+<div id="optimizerTopResults">
+<div style="color:var(--text2);font-size:.65rem;text-align:center;padding:12px">Brak wyników - uruchom optymalizację</div>
+</div>
+
+<!-- Best Params Summary -->
+<div id="optimizerBestSection" style="display:none;margin-top:12px;padding:10px;background:rgba(163,113,247,.15);border-radius:10px;border:1px solid rgba(163,113,247,.3)">
+<div style="font-size:.65rem;color:var(--purple);font-weight:600;margin-bottom:8px">⭐ NAJLEPSZA KONFIGURACJA</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:.6rem">
+<div>Learning Rate: <span id="bestLR" style="font-weight:600;color:var(--text)">--</span></div>
+<div>Epsilon: <span id="bestEps" style="font-weight:600;color:var(--text)">--</span></div>
+<div>Gamma: <span id="bestGamma" style="font-weight:600;color:var(--text)">--</span></div>
+<div>Batch Size: <span id="bestBS" style="font-weight:600;color:var(--text)">--</span></div>
+<div>Memory Size: <span id="bestMem" style="font-weight:600;color:var(--text)">--</span></div>
+<div>Hidden Layers: <span id="bestHL" style="font-weight:600;color:var(--text)">--</span></div>
+</div>
+<div style="margin-top:8px;font-size:.65rem">
+Combined Score: <span id="bestScore" style="font-weight:700;color:var(--purple)">--</span>
+</div>
+</div>
+
+<!-- Score Weights Info -->
+<div style="margin-top:12px;padding:8px;background:var(--bg);border-radius:8px;font-size:.55rem;color:var(--text2)">
+<div style="font-weight:600;margin-bottom:4px">Wagi Combined Score:</div>
+<div>Return 30% | Sharpe 25% | MaxDD 20% | WinRate 15% | ProfitFactor 10%</div>
+</div>
+</div>
 </div>
 
 <!-- Sticky Bottom Navigation - Mobile -->

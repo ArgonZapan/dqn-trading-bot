@@ -54,7 +54,7 @@ function paperLog(...args) {
         console.error('Paper log write failed:', e.message);
     }
 }
-let paperCandles = [];
+let paperCandles = { btc: [], eth: [], sol: [] };
 let paperStrategy = 'trend';
 let htfState = { h1: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 }, h4: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 } };
 const HTF_UPDATE_INTERVAL = 60000; // Update HTF every 60s
@@ -63,17 +63,233 @@ let paperPositionSize = 0.95;
 let paperLastTradeTime = 0;
 const PAPER_TRADE_COOLDOWN = 30000; // 30s between trades
 
-// Grid Trading State
-const gridStrategy = new GridStrategy();
+// ─── Multi-Asset Portfolio Rebalancing ──────────────────────────────────────
+const REBALANCE_PAIRS = {
+    BTC: { symbol: 'BTCUSDT', name: 'Bitcoin', allocation: 0.40, color: '#F7931A' },
+    ETH: { symbol: 'ETHUSDT', name: 'Ethereum', allocation: 0.35, color: '#627EEA' },
+    SOL: { symbol: 'SOLUSDT', name: 'Solana', allocation: 0.25, color: '#00FFA3' }
+};
+const REBALANCE_ASSETS = ['BTC', 'ETH', 'SOL'];
+let paperMultiPositions = {}; // { BTC: null|{side,entryPrice,quantity,fee,pnl,stopLoss,takeProfit,...}, ETH:..., SOL:... }
+let paperAllocation = { BTC: 0.40, ETH: 0.35, SOL: 0.25 }; // Target allocation
+let paperRebalanceEnabled = false;
+let paperRebalanceThreshold = 0.05; // Trigger rebalance if any asset drifts >5% from target
+
+// Initialize multi positions
+for (const asset of REBALANCE_ASSETS) paperMultiPositions[asset] = null;
+
+function paperMultiPositionsValue() {
+    let total = 0;
+    for (const asset of REBALANCE_ASSETS) {
+        const pos = paperMultiPositions[asset];
+        const price = prices[asset.toLowerCase()] || 0;
+        if (pos) {
+            if (pos.side === 'LONG') total += pos.quantity * price;
+            else total += pos.quantity * pos.entryPrice; // Short: use entry for notional
+        }
+    }
+    return total;
+}
+
+function paperFreeCapital() {
+    return paperTrading.capital;
+}
+
+function paperTotalEquity() {
+    return paperFreeCapital() + paperMultiPositionsValue();
+}
+
+// Per-asset position value
+function paperAssetPositionValue(asset) {
+    const pos = paperMultiPositions[asset];
+    if (!pos) return 0;
+    const price = prices[asset.toLowerCase()] || 0;
+    if (pos.side === 'LONG') return pos.quantity * price;
+    return pos.quantity * pos.entryPrice; // SHORT notional
+}
+
+// Per-asset unrealized P&L
+function paperAssetUnrealizedPnl(asset) {
+    const pos = paperMultiPositions[asset];
+    if (!pos) return 0;
+    const price = prices[asset.toLowerCase()] || 0;
+    if (pos.side === 'LONG') return (price - pos.entryPrice) * pos.quantity;
+    return (pos.entryPrice - price) * pos.quantity;
+}
+
+async function paperRebalancingStep() {
+    if (!paperTrading.enabled || !paperRebalanceEnabled) return;
+    if (prices.btc === 0) return;
+    const now = Date.now();
+    if (now - paperLastTradeTime < PAPER_TRADE_COOLDOWN) return;
+
+    const totalEquity = paperTotalEquity();
+    if (totalEquity < 10) return;
+
+    // Check rebalancing need
+    let needsRebalance = false;
+    for (const asset of REBALANCE_ASSETS) {
+        const pos = paperMultiPositions[asset];
+        const price = prices[asset.toLowerCase()] || 0;
+        if (!pos && price > 0) {
+            // No position - check if we should buy
+            const targetValue = totalEquity * paperAllocation[asset];
+            const currentValue = paperAssetPositionValue(asset);
+            const drift = Math.abs(targetValue - currentValue) / totalEquity;
+            if (drift > paperRebalanceThreshold) needsRebalance = true;
+        }
+    }
+
+    // If we need to rebalance, close underweight positions and open overweight ones
+    // For simplicity: evaluate each asset's signal independently
+    for (const asset of REBALANCE_ASSETS) {
+        const cfg = REBALANCE_PAIRS[asset];
+        const symbol = cfg.symbol;
+        const price = prices[asset.toLowerCase()] || 0;
+        if (price === 0) continue;
+
+        const pos = paperMultiPositions[asset];
+        const candles = paperCandles[asset.toLowerCase()] || [];
+        if (candles.length < 50) continue;
+
+        const ind = calcIndicators(candles);
+        const signal = paperSignal(candles, ind, htfState);
+
+        if (!pos && signal === 'BUY') {
+            // Open LONG on this asset
+            const qty = (totalEquity * paperAllocation[asset] * paperPositionSize) / price;
+            const fee = price * qty * 0.001;
+            const sl = price * (1 - paperTrading.stopLoss / 100);
+            const tp = price * (1 + paperTrading.takeProfit / 100);
+            paperMultiPositions[asset] = {
+                id: `paper_${now}_${asset}`,
+                side: 'LONG',
+                entryPrice: price,
+                quantity: qty,
+                fee,
+                pnl: 0,
+                pnlPct: 0,
+                entryTime: now,
+                stopLoss: sl,
+                takeProfit: tp,
+                peakPrice: price
+            };
+            paperTrading.capital -= qty * price + fee;
+            paperLastTradeTime = now;
+            console.log(`📈 PAPER MULTI ${asset} LONG: ${qty.toFixed(6)} @ $${price.toLocaleString()}`);
+            paperLog('OPEN MULTI', asset, 'LONG | Qty:', qty.toFixed(6), '| Entry: $' + price.toLocaleString());
+        } else if (!pos && signal === 'SHORT') {
+            const qty = (totalEquity * paperAllocation[asset] * paperPositionSize) / price;
+            const fee = price * qty * 0.001;
+            const sl = price * (1 + paperTrading.stopLoss / 100);
+            const tp = price * (1 - paperTrading.takeProfit / 100);
+            paperMultiPositions[asset] = {
+                id: `paper_${now}_${asset}`,
+                side: 'SHORT',
+                entryPrice: price,
+                quantity: qty,
+                fee,
+                pnl: 0,
+                pnlPct: 0,
+                entryTime: now,
+                stopLoss: sl,
+                takeProfit: tp,
+                peakPrice: price
+            };
+            paperTrading.capital += qty * price - fee;
+            paperLastTradeTime = now;
+            console.log(`📉 PAPER MULTI ${asset} SHORT: ${qty.toFixed(6)} @ $${price.toLocaleString()}`);
+            paperLog('OPEN MULTI', asset, 'SHORT | Qty:', qty.toFixed(6), '| Entry: $' + price.toLocaleString());
+        } else if (pos) {
+            // Check SL/TP
+            let triggered = false, reason = '';
+            if (pos.side === 'LONG') {
+                const pnl = (price - pos.entryPrice) * pos.quantity;
+                pos.pnl = pnl;
+                pos.pnlPct = ((price - pos.entryPrice) / pos.entryPrice) * 100;
+                if (pos.peakPrice < price) pos.peakPrice = price;
+                const profitPct = ((price - pos.entryPrice) / pos.entryPrice) * 100;
+                const TRAILING_ACTIVATION = 1.0;
+                const TRAILING_DISTANCE = 0.75;
+                if (profitPct >= TRAILING_ACTIVATION) {
+                    const trailSL = pos.peakPrice * (1 - TRAILING_DISTANCE / 100);
+                    const staticSL = pos.stopLoss;
+                    if (trailSL > pos.stopLoss) {
+                        pos.stopLoss = Math.max(pos.stopLoss, trailSL);
+                    }
+                }
+                if (price <= pos.stopLoss) { triggered = true; reason = price <= pos.stopLoss ? 'SL' : 'TP'; }
+                else if (price >= pos.takeProfit) { triggered = true; reason = 'TP'; }
+            } else if (pos.side === 'SHORT') {
+                const pnl = (pos.entryPrice - price) * pos.quantity;
+                pos.pnl = pnl;
+                pos.pnlPct = ((pos.entryPrice - price) / pos.entryPrice) * 100;
+                if (pos.peakPrice > price) pos.peakPrice = price;
+                const profitPct = ((pos.entryPrice - price) / pos.entryPrice) * 100;
+                const TRAILING_ACTIVATION = 1.0;
+                const TRAILING_DISTANCE = 0.75;
+                if (profitPct >= TRAILING_ACTIVATION) {
+                    const trailSL = pos.peakPrice * (1 + TRAILING_DISTANCE / 100);
+                    if (trailSL < pos.stopLoss) {
+                        pos.stopLoss = Math.min(pos.stopLoss, trailSL);
+                    }
+                }
+                if (price >= pos.stopLoss) { triggered = true; reason = 'SL'; }
+                else if (price <= pos.takeProfit) { triggered = true; reason = 'TP'; }
+            }
+
+            // Also check for reversal signal
+            const hasSignalFlip = (signal === 'SHORT' && pos.side === 'LONG') || (signal === 'BUY' && pos.side === 'SHORT');
+
+            if (triggered || hasSignalFlip) {
+                let pnl, exitValue;
+                if (pos.side === 'LONG') {
+                    pnl = (price - pos.entryPrice) * pos.quantity;
+                    exitValue = pos.quantity * price;
+                } else {
+                    pnl = (pos.entryPrice - price) * pos.quantity;
+                    exitValue = pos.quantity * price;
+                }
+                const exitFee = exitValue * 0.001;
+                const netPnl = pnl - pos.fee - exitFee;
+                const closed = {
+                    id: pos.id,
+                    side: pos.side,
+                    asset,
+                    entryPrice: pos.entryPrice,
+                    exitPrice: price,
+                    quantity: pos.quantity,
+                    fee: pos.fee + exitFee,
+                    pnl: netPnl,
+                    pnlPct: pos.pnlPct,
+                    timestamp: now,
+                    entryTime: pos.entryTime,
+                    exitReason: triggered ? reason : 'REBALANCE_FLIP'
+                };
+                paperTrading.closedTrades.push(closed);
+                if (pos.side === 'LONG') {
+                    paperTrading.capital += exitValue - exitFee;
+                } else {
+                    paperTrading.capital -= exitValue + exitFee;
+                    paperTrading.capital += pnl - pos.fee - exitFee;
+                }
+                paperMultiPositions[asset] = null;
+                paperLastTradeTime = now;
+                console.log(`⚡ PAPER MULTI ${asset} ${pos.side} CLOSED: P&L $${netPnl.toFixed(2)} @ $${price.toLocaleString()} [${reason}]`);
+                paperLog('CLOSE MULTI', asset, pos.side, '| Exit:', '$' + price.toLocaleString(), '| P&L: $' + netPnl.toFixed(2), '| Reason:', triggered ? reason : 'FLIP');
+                updatePaperStats();
+            }
+        }
+    }
+}
+
+// Grid Trading State - loaded after RL components to avoid initialization order issues
+let gridStrategy = null;
 let gridParams = {
     gridSize: parseFloat(process.env.GRID_SIZE) || 50,
     gridCount: parseInt(process.env.GRID_COUNT) || 5,
     gridSpacing: process.env.GRID_SPACING || 'absolute'
 };
-// Initialize grid params
-gridStrategy.GRID_SIZE = gridParams.gridSize;
-gridStrategy.GRID_COUNT = gridParams.gridCount;
-gridStrategy.GRID_SPACING = gridParams.gridSpacing;
 
 // Alert tracking state
 let paperLastAlertBalance = 1000;
@@ -258,6 +474,12 @@ const Env = require('../src/environment');
 const Agent = require('../src/dqnAgent');
 const Hyperopt = require('../src/hyperopt');
 const { GridStrategy, backtestGridStrategy } = require('../src/strategies/gridStrategy');
+
+// Initialize grid strategy after require
+gridStrategy = new GridStrategy();
+gridStrategy.GRID_SIZE = gridParams.gridSize;
+gridStrategy.GRID_COUNT = gridParams.gridCount;
+gridStrategy.GRID_SPACING = gridParams.gridSpacing;
 
 const env = new Env('BTCUSDT', 59);
 const agent = new Agent(300, 3);
@@ -940,15 +1162,37 @@ const server = http.createServer(async (req, res) => {
     
     // Paper Trading endpoints
     if (url === '/api/paper-trading') {
+        const totalEquity = paperFreeCapital() + paperPositionsValue();
         res.end(JSON.stringify({
             enabled: paperTrading.enabled,
             capital: paperTrading.capital,
+            equity: totalEquity,
             positions: paperTrading.positions,
             stats: paperTrading.stats,
             stopLoss: paperTrading.stopLoss,
             takeProfit: paperTrading.takeProfit,
             trailingActivation: TRAILING_ACTIVATION,
-            trailingDistance: TRAILING_DISTANCE
+            trailingDistance: TRAILING_DISTANCE,
+            // Multi-asset rebalancing
+            rebalanceEnabled: paperRebalanceEnabled,
+            rebalanceThreshold: paperRebalanceThreshold,
+            allocation: paperAllocation,
+            multiPositions: Object.fromEntries(
+                REBALANCE_ASSETS.map(a => [
+                    a,
+                    paperMultiPositions[a] ? {
+                        side: paperMultiPositions[a].side,
+                        entryPrice: paperMultiPositions[a].entryPrice,
+                        quantity: paperMultiPositions[a].quantity,
+                        pnl: paperMultiPositions[a].pnl,
+                        pnlPct: paperMultiPositions[a].pnlPct,
+                        stopLoss: paperMultiPositions[a].stopLoss,
+                        takeProfit: paperMultiPositions[a].takeProfit,
+                        unrealizedPnl: paperAssetUnrealizedPnl(a),
+                        currentValue: paperAssetPositionValue(a)
+                    } : null
+                ])
+            )
         }));
         return;
     }
@@ -959,6 +1203,9 @@ const server = http.createServer(async (req, res) => {
         paperTrading.positions = [];
         paperTrading.closedTrades = [];
         paperOpenPosition = null;
+        // Reset multi-asset positions
+        for (const asset of REBALANCE_ASSETS) paperMultiPositions[asset] = null;
+        paperEquityCurve = [];
         updatePaperStats();
         // Reset alert tracking
         paperLastAlertBalance = 1000;
@@ -1009,6 +1256,34 @@ const server = http.createServer(async (req, res) => {
             } catch(e) {}
             paperOpenPosition = null;
             paperTrading.positions = [];
+        }
+        // Close all multi-asset positions on stop
+        for (const asset of REBALANCE_ASSETS) {
+            const pos = paperMultiPositions[asset];
+            if (pos && prices[asset.toLowerCase()] > 0) {
+                const price = prices[asset.toLowerCase()];
+                let pnl, exitValue;
+                if (pos.side === 'LONG') {
+                    pnl = (price - pos.entryPrice) * pos.quantity;
+                    exitValue = pos.quantity * price;
+                    paperTrading.capital += exitValue - price * pos.quantity * 0.001;
+                } else {
+                    pnl = (pos.entryPrice - price) * pos.quantity;
+                    exitValue = pos.quantity * price;
+                    paperTrading.capital -= exitValue + price * pos.quantity * 0.001;
+                    paperTrading.capital += pnl - pos.fee - price * pos.quantity * 0.001;
+                }
+                paperTrading.closedTrades.push({
+                    id: pos.id, side: pos.side, asset,
+                    entryPrice: pos.entryPrice, exitPrice: price,
+                    quantity: pos.quantity,
+                    fee: pos.fee + price * pos.quantity * 0.001,
+                    pnl: pnl - pos.fee - price * pos.quantity * 0.001,
+                    timestamp: Date.now(),
+                    entryTime: pos.entryTime, exitReason: 'STOP_API'
+                });
+                paperMultiPositions[asset] = null;
+            }
         }
         paperTrading.enabled = false;
         updatePaperStats();
@@ -1107,6 +1382,7 @@ const server = http.createServer(async (req, res) => {
         paperTrading.closedTrades = [];
         paperOpenPosition = null;
         paperEquityCurve = [];
+        for (const asset of REBALANCE_ASSETS) paperMultiPositions[asset] = null;
         updatePaperStats();
         res.end(JSON.stringify({ success: true }));
         return;
@@ -1149,6 +1425,90 @@ const server = http.createServer(async (req, res) => {
             gridSize: gridParams.gridSize,
             gridCount: gridParams.gridCount,
             gridSpacing: gridParams.gridSpacing
+        }));
+        return;
+    }
+
+    // POST /api/paper-trading/rebalance-config - configure multi-asset rebalancing
+    if (url === '/api/paper-trading/rebalance-config' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+            try {
+                const data = JSON.parse(body || '{}');
+                if (data.enabled !== undefined) paperRebalanceEnabled = !!data.enabled;
+                if (data.threshold !== undefined) paperRebalanceThreshold = Math.max(0.01, Math.min(0.5, parseFloat(data.threshold)));
+                if (data.allocation) {
+                    // data.allocation = { BTC: 0.4, ETH: 0.35, SOL: 0.25 }
+                    const total = Object.values(data.allocation).reduce((s, v) => s + Math.max(0, Math.min(1, parseFloat(v) || 0)), 0);
+                    if (total > 0 && total <= 1.5) {
+                        for (const asset of REBALANCE_ASSETS) {
+                            if (data.allocation[asset] !== undefined) {
+                                paperAllocation[asset] = Math.max(0.01, Math.min(1, parseFloat(data.allocation[asset]) || 0));
+                            }
+                        }
+                    }
+                }
+                // Initialize candle history if enabling
+                if (paperRebalanceEnabled && paperCandles.btc.length === 0) {
+                    const syms = [['BTC','BTCUSDT'],['ETH','ETHUSDT'],['SOL','SOLUSDT']];
+                    await Promise.all(syms.map(async ([asset, sym]) => {
+                        const c = await fetchCandles(sym, '1m', 60);
+                        if (c.length > 0) paperCandles[asset.toLowerCase()] = c;
+                    }));
+                }
+                res.end(JSON.stringify({
+                    enabled: paperRebalanceEnabled,
+                    threshold: paperRebalanceThreshold,
+                    allocation: paperAllocation,
+                    assets: Object.fromEntries(REBALANCE_ASSETS.map(a => [a, REBALANCE_PAIRS[a]]))
+                }));
+            } catch(e) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: e.message }));
+            }
+        });
+        return;
+    }
+
+    // GET /api/paper-trading/rebalance-status - get current rebalancing state
+    if (url === '/api/paper-trading/rebalance-status') {
+        const totalEquity = paperTotalEquity();
+        const assetDetails = {};
+        for (const asset of REBALANCE_ASSETS) {
+            const cfg = REBALANCE_PAIRS[asset];
+            const pos = paperMultiPositions[asset];
+            const price = prices[asset.toLowerCase()] || 0;
+            const currentValue = paperAssetPositionValue(asset);
+            const unrealizedPnl = paperAssetUnrealizedPnl(asset);
+            const targetValue = totalEquity * paperAllocation[asset];
+            const drift = totalEquity > 0 ? ((currentValue / totalEquity) - paperAllocation[asset]) : 0;
+            assetDetails[asset] = {
+                name: cfg.name,
+                color: cfg.color,
+                targetAllocation: paperAllocation[asset],
+                currentAllocation: totalEquity > 0 ? currentValue / totalEquity : 0,
+                drift: drift,
+                needsRebalance: Math.abs(drift) > paperRebalanceThreshold,
+                position: pos ? {
+                    side: pos.side,
+                    entryPrice: pos.entryPrice,
+                    currentPrice: price,
+                    quantity: pos.quantity,
+                    unrealizedPnl,
+                    pnlPct: pos.pnlPct,
+                    stopLoss: pos.stopLoss,
+                    takeProfit: pos.takeProfit
+                } : null
+            };
+        }
+        res.end(JSON.stringify({
+            enabled: paperRebalanceEnabled,
+            threshold: paperRebalanceThreshold,
+            totalEquity,
+            capital: paperFreeCapital(),
+            allocation: paperAllocation,
+            assetDetails
         }));
         return;
     }
@@ -1694,6 +2054,119 @@ const server = http.createServer(async (req, res) => {
         return;
     }
     
+    // ─── Hyperparameter Grid Optimizer API ──────────────────────────────────────
+    if (!global.optimizer) {
+        const HyperparameterOptimizer = require('../src/optimizer');
+        global.optimizer = new HyperparameterOptimizer();
+    }
+    
+    // GET /api/optimizer/status - status optymalizacji
+    if (url === '/api/optimizer/status') {
+        res.end(JSON.stringify(global.optimizer.getStatus()));
+        return;
+    }
+    
+    // POST /api/optimizer/start - rozpocznij optymalizację
+    if (url === '/api/optimizer/start' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+            try {
+                const data = JSON.parse(body || '{}');
+                const paramGrid = data.paramGrid || {
+                    learningRate: [0.0001, 0.0005, 0.001, 0.005],
+                    epsilon: [0.1, 0.3, 0.5],
+                    gamma: [0.9, 0.95, 0.99],
+                    batchSize: [32, 64, 128],
+                    memorySize: [1000, 5000, 10000],
+                    hiddenLayers: [[256, 128, 64], [512, 256, 128], [300, 200, 100]]
+                };
+                const iterations = data.iterations || null;
+                
+                if (global.optimizer.isRunning) {
+                    res.writeHead(409);
+                    res.end(JSON.stringify({ error: 'Optymalizacja już trwa', status: global.optimizer.getStatus() }));
+                    return;
+                }
+                
+                // Uruchom optymalizację asynchronicznie
+                global.optimizer.optimize(paramGrid, iterations).then(result => {
+                    console.log('🔬 Optymalizacja zakończona:', result);
+                }).catch(err => {
+                    console.error('Błąd optymalizacji:', err);
+                });
+                
+                res.end(JSON.stringify({ success: true, message: 'Optymalizacja rozpoczęta', status: global.optimizer.getStatus() }));
+            } catch(e) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: e.message }));
+            }
+        });
+        return;
+    }
+    
+    // POST /api/optimizer/stop - zatrzymaj optymalizację
+    if (url === '/api/optimizer/stop' && req.method === 'POST') {
+        global.optimizer.stop();
+        res.end(JSON.stringify({ success: true, message: 'Wysłano sygnał zatrzymania' }));
+        return;
+    }
+    
+    // GET /api/optimizer/results - wyniki najlepszych konfiguracji
+    if (url === '/api/optimizer/results') {
+        const urlParts = url.split('?');
+        const params = new URLSearchParams(urlParts[1] || '');
+        const top = parseInt(params.get('top')) || 5;
+        const topResults = global.optimizer.getTopResults(top);
+        res.end(JSON.stringify({
+            results: topResults,
+            bestParams: global.optimizer.bestParams,
+            bestScore: global.optimizer.bestScore,
+            totalEvaluated: global.optimizer.results.length
+        }));
+        return;
+    }
+    
+    // POST /api/optimizer/apply-best - zaaplikuj najlepsze parametry do agenta
+    if (url === '/api/optimizer/apply-best' && req.method === 'POST') {
+        const best = global.optimizer.bestParams;
+        if (!best) {
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: 'Brak najlepszych parametrów. Uruchom najpierw optymalizację.' }));
+            return;
+        }
+        
+        // Aplikuj do agenta DQN
+        if (agent) {
+            agent.learningRate = best.learningRate;
+            agent.gamma = best.gamma;
+            agent.batchSize = best.batchSize;
+            agent.epsilon = best.epsilon;
+            agent.bufferSize = best.memorySize;
+            console.log('🔧 Zaaplikowano najlepsze parametry:', best);
+        }
+        
+        res.end(JSON.stringify({ success: true, appliedParams: best }));
+        return;
+    }
+    
+    // GET /api/optimizer/history - historia optymalizacji
+    if (url === '/api/optimizer/history') {
+        const historyFile = path.join(__dirname, '..', 'optimization-results.json');
+        try {
+            if (fs.existsSync(historyFile)) {
+                const history = JSON.parse(fs.readFileSync(historyFile, 'utf8'));
+                res.end(JSON.stringify(history));
+            } else {
+                res.end(JSON.stringify({ message: 'Brak historii optymalizacji' }));
+            }
+        } catch(e) {
+            res.writeHead(500);
+            res.end(JSON.stringify({ error: e.message }));
+        }
+        return;
+    }
+    
     // Static files
     res.setHeader('Content-Type', 'text/html');
     const fp = path.join(__dirname, '..', url === '/' ? 'client/index.html' : url);
@@ -1848,6 +2321,14 @@ async function updatePrices() {
             eth: parseFloat(eth.price),
             sol: parseFloat(sol.price)
         };
+        // Update multi-asset candles for rebalancing (every 15s to reduce API load)
+        if (paperRebalanceEnabled) {
+            for (const asset of REBALANCE_ASSETS) {
+                const sym = REBALANCE_PAIRS[asset].symbol;
+                const candles = await fetchCandles(sym, '1m', 60);
+                if (candles.length > 0) paperCandles[asset.toLowerCase()] = candles;
+            }
+        }
     } catch (e) {}
 }
 
@@ -1870,6 +2351,7 @@ async function updateHtfTrends() {
 setInterval(updatePrices, 3000);
 setInterval(trainingStep, 1000);
 setInterval(paperTradingStep, 5000); // Paper trading check every 5s
+setInterval(paperRebalancingStep, 10000); // Multi-asset rebalancing every 10s
 setInterval(updateHtfTrends, HTF_UPDATE_INTERVAL);
 updatePrices();
 updateHtfTrends(); // Initial HTF load

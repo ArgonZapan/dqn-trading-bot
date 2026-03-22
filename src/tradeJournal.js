@@ -168,6 +168,46 @@ class TradeJournal {
 
         return { items, total, page, limit, pages: Math.ceil(total / limit) };
     }
+
+    // Export all trades to CSV file
+    exportToCsv(exportDir = '.') {
+        const fs = require('fs');
+        const fileName = `trade-journal-${Date.now()}.csv`;
+        const filePath = path.join(exportDir, fileName);
+
+        const headers = ['id', 'entryTime', 'exitTime', 'symbol', 'direction', 'strategy',
+                         'entryPrice', 'exitPrice', 'quantity', 'pnlPercent', 'pnlAbsolute',
+                         'commission', 'holdingBars', 'exitReason', 'episode', 'isPaper', 'maxDrawdown'];
+
+        const rows = this.trades.map(t => [
+            t.id,
+            t.entryTime || '',
+            t.exitTime || '',
+            t.symbol || 'BTCUSDT',
+            t.direction || 'LONG',
+            t.strategy || 'unknown',
+            t.entryPrice || 0,
+            t.exitPrice || '',
+            t.quantity || 0,
+            (t.pnlPercent || 0).toFixed(3),
+            (t.pnlAbsolute || 0).toFixed(2),
+            (t.commission || 0).toFixed(4),
+            t.holdingBars || 0,
+            t.exitReason || '',
+            t.episode || 0,
+            t.isPaper !== undefined ? t.isPaper : true,
+            (t.maxDrawdown || 0).toFixed(2)
+        ].join(','));
+
+        const csv = [headers.join(','), ...rows].join('\n');
+        fs.writeFileSync(filePath, csv, 'utf8');
+        console.log(`[TradeJournal] Exported ${this.trades.length} trades to ${filePath}`);
+        return filePath;
+    }
 }
 
-module.exports = new TradeJournal();
+// Export both named (class) and default (instance)
+const journal = new TradeJournal();
+module.exports = journal;
+module.exports.TradeJournal = TradeJournal;
+module.exports.exportJournal = (exportDir) => journal.exportToCsv(exportDir);

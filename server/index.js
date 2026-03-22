@@ -2332,6 +2332,17 @@ const server = http.createServer(async (req, res) => {
         res.json(tradeJournal.listTrades(page, limit, filter));
         return;
     }
+
+    // GET /api/trade-journal/export - export trades as CSV
+    if (url === '/api/trade-journal/export') {
+        const { exportJournal } = require('../src/tradeJournal');
+        const exportDir = process.env.JOURNAL_EXPORT_DIR || path.join(__dirname, '..', 'exports');
+        const fs = require('fs');
+        if (!fs.existsSync(exportDir)) fs.mkdirSync(exportDir, { recursive: true });
+        const filePath = exportJournal(exportDir);
+        res.json({ success: true, file: filePath });
+        return;
+    }
     
     // Training controls
     if (url === '/api/training/start') {

@@ -3228,16 +3228,21 @@ async function trainingStep() {
     // Each tick = 1 OHLC candle (open=high=low=close=price)
     // Guard: env.currentPrice() returns 0 when step is past last candle (after execute increments it)
     if (trainingPrice > 0) {
-      const tickAction = action === 0 ? 'HOLD' : action === 1 ? 'BUY' : 'SELL';
-      // Check if a trade was just executed (override HOLD with actual trade action)
-      const epTrade = tradesAfter.length > episodeTrades.length ? episodeTrades[episodeTrades.length - 1]?.action : null;
+      // Use Binance candle timestamp instead of Date.now()
+      const candle = env.candles?.[env.step - 1]; // step-1 = candle that was just traded on (execute already incremented step)
+      const time = candle ? Math.floor(candle.time / 1000) : Math.floor(Date.now() / 1000);
+
+      // Check if a real trade was just executed (env.trades grew)
+      const tradeJustExecuted = tradesAfter.length > episodeTrades.length;
+      const tradeAction = tradeJustExecuted ? episodeTrades[episodeTrades.length - 1]?.action : null;
+
       currentEpData.push({
-        time: Math.floor(Date.now() / 1000),
+        time,
         open: trainingPrice,
         high: trainingPrice,
         low: trainingPrice,
         close: trainingPrice,
-        action: epTrade || tickAction
+        action: tradeAction || 'HOLD'  // Only real trades get BUY/SELL/SHORT/COVER, otherwise HOLD
       });
     }
 

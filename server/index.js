@@ -499,6 +499,9 @@ let episodeEpsilons = [];
 let episodeEquity = [];
 let episodeStartBalance = 1000;
 
+// Previous episode data (for "Poprzedni Epizod" chart)
+let prevEpisodeData = null; // { candles, trades, equity, episode, pnlPercent }
+
 // Episode history (completed episodes)
 let episodeHistory = [];
 const MAX_HISTORY = 50;
@@ -1251,14 +1254,14 @@ const server = http.createServer(async (req, res) => {
     }
     
     if (url === '/api/episode-data') {
-        // Build OHLCV candles from episode prices (group by 5-second buckets)
-        let candles = [];
+        // Build OHLCV candles from current episode prices (group by 5-second buckets)
+        let currentCandles = [];
         if (currentEpisodeSteps.length > 0) {
             const bucketSize = 5; // seconds
             const buckets = {};
             for (const p of currentEpisodeSteps) {
                 const t = p.time || Date.now();
-                const bucketKey = Math.floor(t / (bucketSize * 1000)) * bucketSize; // Unix seconds, 5s bucket
+                const bucketKey = Math.floor(t / (bucketSize * 1000)) * bucketSize;
                 if (!buckets[bucketKey]) {
                     buckets[bucketKey] = { time: bucketKey, open: p.price, high: p.price, low: p.price, close: p.price };
                 } else {
@@ -1267,14 +1270,37 @@ const server = http.createServer(async (req, res) => {
                     buckets[bucketKey].close = p.price;
                 }
             }
-            candles = Object.values(buckets).sort((a, b) => a.time - b.time);
+            currentCandles = Object.values(buckets).sort((a, b) => a.time - b.time);
         }
+
+        // Build currentEp and prevEp
+        const currentEp = {
+            candles: currentCandles,
+            trades: episodeTrades,
+            equity: episodeEquity,
+            prices: currentEpisodeSteps,
+            epsilons: episodeEpsilons,
+            episode: agent.episode
+        };
+
+        const prevEp = prevEpisodeData ? {
+            candles: prevEpisodeData.candles,
+            trades: prevEpisodeData.trades,
+            equity: prevEpisodeData.equity,
+            episode: prevEpisodeData.episode,
+            pnlPercent: prevEpisodeData.pnlPercent
+        } : { candles: [], trades: [], equity: [], episode: null, pnlPercent: 0 };
+
         res.end(JSON.stringify({
+            // New dual-chart format
+            currentEp,
+            prevEp,
+            // Legacy fields for backward compatibility
             prices: currentEpisodeSteps,
             trades: episodeTrades,
             epsilons: episodeEpsilons,
             equity: episodeEquity,
-            candles,
+            candles: currentCandles,
             episode: agent.episode
         }));
         return;
@@ -3301,6 +3327,30 @@ async function trainingStep() {
         bufferHealth.recordEpisode(pnlPercent, metrics.steps);
         bufferHealth.resetActionCounts();
         
+        // Save current episode data to prevEpisodeData BEFORE reset
+        {
+            const bucketSize = 5;
+            const buckets = {};
+            for (const p of currentEpisodeSteps) {
+                const t = p.time || Date.now();
+                const bucketKey = Math.floor(t / (bucketSize * 1000)) * bucketSize;
+                if (!buckets[bucketKey]) {
+                    buckets[bucketKey] = { time: bucketKey, open: p.price, high: p.price, low: p.price, close: p.price };
+                } else {
+                    buckets[bucketKey].high = Math.max(buckets[bucketKey].high, p.price);
+                    buckets[bucketKey].low = Math.min(buckets[bucketKey].low, p.price);
+                    buckets[bucketKey].close = p.price;
+                }
+            }
+            prevEpisodeData = {
+                candles: Object.values(buckets).sort((a, b) => a.time - b.time),
+                trades: [...episodeTrades],
+                equity: [...episodeEquity],
+                episode: completedEpisode,
+                pnlPercent
+            };
+        }
+
         // Reset episode tracking state BEFORE starting new episode
         episodeTrades = [];
         currentEpisodeSteps = [];

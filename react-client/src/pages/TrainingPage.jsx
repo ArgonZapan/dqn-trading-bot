@@ -1,5 +1,5 @@
 import { Card, MetricsGrid, Button } from '../components/common';
-import { EpisodeChart, EpisodeHistoryList } from '../components/training/EpisodeChart';
+import { EpisodeCharts, EpisodeHistoryList } from '../components/training/EpisodeChart';
 import { useStatus, useStartTraining, useStopTraining, useSaveModel } from '../hooks/useApi';
 import { useTrainingTimer } from '../hooks/useTrainingTimer';
 
@@ -58,8 +58,8 @@ export default function TrainingPage() {
         <div className="timer-label">{training ? 'Running' : 'Idle'}</div>
       </Card>
 
-      {/* Episode Chart */}
-      <EpisodeChart />
+      {/* Episode Charts (Live + Previous) */}
+      <EpisodeCharts />
 
       {/* Episode History */}
       <EpisodeHistoryList />

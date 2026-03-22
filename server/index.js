@@ -1708,6 +1708,137 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MONTE CARLO — risk simulation API
+    // ═══════════════════════════════════════════════════════════════════════════
+    const MonteCarlo = require('../src/monteCarlo');
+
+    // POST /api/monte-carlo/run — run a simulation
+    if (url === '/api/monte-carlo/run' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+            try {
+                const opts = JSON.parse(body || '{}');
+                const simOptions = {
+                    numSimulations: parseInt(opts.numSimulations) || 10000,
+                    initialCapital: parseFloat(opts.initialCapital) || 1000,
+                    tradesPerRun: parseInt(opts.tradesPerRun) || 50
+                };
+
+                // Use paper trading closed trades as basis
+                const closed = paperTrading.closedTrades.filter(t => t.exitPrice != null || t.pnl !== undefined);
+                const trades = closed.map(t => ({
+                    pnlPercent: t.pnlPct !== undefined ? t.pnlPct : (t.pnl / (t.quantity * t.entryPrice || 1)) * 100,
+                    exitPrice: t.exitPrice || t.price || 0
+                }));
+
+                if (trades.length < 5) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: `Need at least 5 closed trades (have ${trades.length}). Run paper trading first.` }));
+                    return;
+                }
+
+                const result = MonteCarlo.runFromTradeData(trades, simOptions);
+                global._monteCarloResult = result; // cache for summary/export
+
+                // Auto-save result
+                MonteCarlo.saveResults(result);
+                console.log(`🎲 Monte Carlo: ${result.simulations} sims | ${trades.length} trades | Prob of loss: ${result.probabilityOfLoss}%`);
+                res.json({ success: true, simulations: result.simulations, tradesUsed: trades.length, result });
+            } catch(e) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: e.message }));
+            }
+        });
+        return;
+    }
+
+    // GET /api/monte-carlo/summary — formatted text summary
+    if (url === '/api/monte-carlo/summary') {
+        const r = global._monteCarloResult;
+        if (!r) {
+            res.end('No simulation run yet. POST to /api/monte-carlo/run first.');
+            return;
+        }
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.end(MonteCarlo.formatSummary(r));
+        return;
+    }
+
+    // GET /api/monte-carlo/export/json — export full results
+    if (url === '/api/monte-carlo/export/json') {
+        const r = global._monteCarloResult;
+        if (!r) {
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: 'No simulation results. Run POST /api/monte-carlo/run first.' }));
+            return;
+        }
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename="monte-carlo-${Date.now()}.json"`);
+        res.end(JSON.stringify(r, null, 2));
+        return;
+    }
+
+    // GET /api/monte-carlo/export/equity-csv — export sample equity curves as CSV
+    if (url === '/api/monte-carlo/export/equity-csv') {
+        const r = global._monteCarloResult;
+        if (!r || !r.sampleEquityCurves || r.sampleEquityCurves.length === 0) {
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: 'No simulation results.' }));
+            return;
+        }
+        // For CSV export we need to run a quick sim that returns per-simulation equity values
+        // Instead, export the summary stats table
+        const header = 'Metric,Value\n';
+        const rows = [
+            `Simulations,${r.simulations}`,
+            `TradesPerRun,${r.tradesPerRun}`,
+            `InitialCapital,$${r.initialCapital}`,
+            `TerminalEquity_Mean,$${r.terminalEquity.mean}`,
+            `TerminalEquity_Median,$${r.terminalEquity.median}`,
+            `TerminalEquity_Std,$${r.terminalEquity.std}`,
+            `TerminalEquity_P5,$${r.terminalEquity.p5}`,
+            `TerminalEquity_P95,$${r.terminalEquity.p95}`,
+            `VaR_95%,${r.var[95]}%`,
+            `VaR_99%,${r.var[99]}%`,
+            `CVaR_95%,${r.cvar[95]}%`,
+            `CVaR_99%,${r.cvar[99]}%`,
+            `ProbabilityOfLoss,${r.probabilityOfLoss}%`,
+            `MaxDrawdown_Mean,${r.maxDrawdown.mean}%`,
+            `MaxDrawdown_P95,${r.maxDrawdown.p95}%`,
+            `MaxDrawdown_Worst,${r.maxDrawdown.worst}%`,
+            `DrawdownProb_over5%,${r.drawdownProbabilities.over5}%`,
+            `DrawdownProb_over10%,${r.drawdownProbabilities.over10}%`,
+            `DrawdownProb_over20%,${r.drawdownProbabilities.over20}%`,
+            `AvgSimulatedWinRate,${r.avgWinRate}%`,
+            `RiskAdjustedReturn,${r.riskAdjustedReturn}`,
+            `HistoricalWinRate,${r.returnStats.historicalWinRate}%`
+        ].join('\n');
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="monte-carlo-stats-${Date.now()}.csv"`);
+        res.end(header + rows);
+        return;
+    }
+
+    // GET /api/monte-carlo/quick — fast 1000-sim version using recent equity curve
+    if (url === '/api/monte-carlo/quick') {
+        const closed = paperEquityCurve.length > 0
+            ? paperEquityCurve.map(e => ({ pnlPct: ((e.equity - paperEquityCurve[0].equity) / paperEquityCurve[0].equity) * 100, exitPrice: e.price }))
+            : [];
+
+        if (closed.length < 5) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Not enough equity curve data. Run paper trading first.' }));
+            return;
+        }
+
+        const result = MonteCarlo.runFromTradeData(closed, { numSimulations: 1000, tradesPerRun: 30 });
+        global._monteCarloResult = result;
+        res.json({ success: true, source: 'equityCurve', simulations: result.simulations, result });
+        return;
+    }
+
     if (url === '/api/strategy/compare') {
         const binance = require('../src/services/BinanceClient');
         const client = new binance();

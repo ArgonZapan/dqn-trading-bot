@@ -827,6 +827,38 @@ Kliknij <strong>⚡ Compare</strong> aby przetestować wszystkie strategie na os
 <div id="journalTradesList" style="max-height:200px;overflow-y:auto;font-size:.65rem"></div>
 </div>
 </div>
+
+<!-- Rebalancer Card -->
+<div class="card" style="margin-top:16px" id="rebalancerCard">
+<div class="card-header">🔄 Portfolio Rebalancer</div>
+<div class="card-body">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+<div style="font-size:.75rem;color:var(--text2)">Auto-rebalance paper positions</div>
+<label class="switch">
+<input type="checkbox" id="rebalancerToggle" onchange="toggleRebalancer()">
+<span class="slider"></span>
+</label>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+<div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Threshold</div>
+<div style="font-size:.9rem;font-weight:700;color:var(--blue)" id="rebalancerThreshold">5%</div>
+</div>
+<div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Status</div>
+<div style="font-size:.9rem;font-weight:700" id="rebalancerStatus">Disabled</div>
+</div>
+</div>
+<div id="rebalancerStatus2" style="margin-bottom:12px;padding:8px;background:var(--bg);border-radius:8px;font-size:.65rem;color:var(--text2)">
+Drift: <span id="rebalancerDrift" style="font-weight:600;color:var(--text2)">--</span>
+</div>
+<div style="display:flex;gap:8px">
+<button class="btn" onclick="rebalanceNow()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#58a6ff,#1f6feb)">⚖️ REBALANCE NOW</button>
+<button class="btn" onclick="updateRebalancerStatus()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#6366f1,#4f46e5)">🔄</button>
+</div>
+</div>
+</div>
+
 <!-- Live Trading Card -->
 <div class="card" style="margin-top:16px" id="liveTradingCard">
 <div class="card-header">🚀 Live Trading <span id="liveModeBadge" style="display:none;background:linear-gradient(135deg,#f85149,#da3633);color:#fff;font-size:.5rem;font-weight:700;padding:2px 6px;border-radius:6px;text-transform:uppercase;margin-left:6px">⚠️ REAL</span><span id="liveTestBadge" style="display:none;background:linear-gradient(135deg,#f0883e,#b35900);color:#fff;font-size:.5rem;font-weight:700;padding:2px 6px;border-radius:6px;text-transform:uppercase;margin-left:6px">🧪 TEST</span></div>
@@ -1611,7 +1643,60 @@ async function updatePaper(){
     }
     updatePerformance();
     updatePaperStatsFromJournal();
+    updateRebalancerStatus();
   } catch(e){}
+}
+
+async function updateRebalancerStatus(){
+  try {
+    const d=await fetch('/api/rebalancer/status').then(r=>r.json());
+    const toggle=document.getElementById('rebalancerToggle');
+    if(toggle)toggle.checked=d.enabled||false;
+    const thresholdEl=document.getElementById('rebalancerThreshold');
+    if(thresholdEl)thresholdEl.textContent=Math.round((d.threshold||0.05)*100)+'%';
+    const statusEl=document.getElementById('rebalancerStatus');
+    if(statusEl){
+      statusEl.textContent=d.enabled?'Enabled':'Disabled';
+      statusEl.style.color=d.enabled?'var(--green)':'var(--text2)';
+    }
+    const driftEl=document.getElementById('rebalancerDrift');
+    if(driftEl){
+      if(d.enabled&&d.driftDetected){
+        driftEl.textContent='⚠️ DRIFT DETECTED';
+        driftEl.style.color='var(--orange)';
+      } else if(d.enabled){
+        driftEl.textContent='✓ Balanced';
+        driftEl.style.color='var(--green)';
+      } else {
+        driftEl.textContent='--';
+        driftEl.style.color='var(--text2)';
+      }
+    }
+  } catch(e){}
+}
+
+async function toggleRebalancer(){
+  try {
+    const enabled=document.getElementById('rebalancerToggle').checked;
+    await fetch('/api/rebalancer/config',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({enabled})
+    }).then(r=>r.json());
+    updateRebalancerStatus();
+  } catch(e){}
+}
+
+async function rebalanceNow(){
+  try {
+    const r=await fetch('/api/rebalancer/config',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({trigger:true})
+    }).then(r=>r.json());
+    log('Rebalance triggered','system');
+    updateRebalancerStatus();
+  } catch(e){log('Rebalance error: '+e.message,'error');}
 }
 
 async function updatePaperStatsFromJournal(){

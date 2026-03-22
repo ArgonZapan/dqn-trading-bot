@@ -15,6 +15,7 @@ const TRAILING_DISTANCE = 0.75; // % below peak price for trailing SL
 
 // Trade Journal
 const tradeJournal = require('../src/tradeJournal');
+const Rebalancer = require('../src/rebalancer');
 
 // State
 let prices = { btc: 0, eth: 0, sol: 0 };
@@ -488,6 +489,7 @@ gridStrategy.GRID_SPACING = gridParams.gridSpacing;
 const env = new Env('BTCUSDT', 59);
 const agent = new Agent(300, 3);
 const hyperopt = new Hyperopt();
+const rebalancer = new Rebalancer({ enabled: false, threshold: 0.05 });
 
 // Load last model if exists
 async function loadLastModel() {
@@ -839,6 +841,13 @@ async function paperTradingStep() {
     const currentPrice = prices.btc;
     const posValue = paperPositionsValue();
     const totalEquity = paperFreeCapital() + posValue;
+    
+    // Update rebalancer with current paper positions
+    if (paperOpenPosition) {
+        rebalancer.setPosition('paper_' + paperStrategy, paperOpenPosition.quantity, currentPrice);
+    } else {
+        rebalancer.setPosition('paper_' + paperStrategy, 0, currentPrice);
+    }
     const peakEquity = paperEquityCurve.length > 0
         ? Math.max(...paperEquityCurve.map(e => e.equity))
         : totalEquity;
@@ -1669,8 +1678,35 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // STRATEGY COMPARISON — backtest all strategies on recent data
+    // REBALANCER — portfolio rebalancing across paper trading strategies
     // ═══════════════════════════════════════════════════════════════════════════
+
+    if (url === '/api/rebalancer/status') {
+        const status = rebalancer.getStatus();
+        const totalEq = paperFreeCapital() + paperPositionsValue();
+        const weights = rebalancer.getWeights(totalEq);
+        const targetWeights = { ['paper_' + paperStrategy]: 1.0 };
+        const drift = rebalancer.needsRebalance(targetWeights, totalEq);
+        res.end(JSON.stringify({ ...status, currentWeights: weights, driftDetected: drift }));
+        return;
+    }
+
+    if (url === '/api/rebalancer/config' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+            try {
+                const { enabled, threshold } = JSON.parse(body);
+                if (typeof enabled === 'boolean') rebalancer.enabled = enabled;
+                if (typeof threshold === 'number') rebalancer.threshold = threshold;
+                res.end(JSON.stringify({ success: true, ...rebalancer.getStatus() }));
+            } catch(e) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: 'Invalid JSON' }));
+            }
+        });
+        return;
+    }
 
     if (url === '/api/strategy/compare') {
         const binance = require('../src/services/BinanceClient');

@@ -498,6 +498,7 @@ let currentEpisodeSteps = [];
 let episodeEpsilons = [];
 let episodeEquity = [];
 let episodeStartBalance = 1000;
+let prevEpisode = 0;
 
 // Previous episode data (for "Poprzedni Epizod" chart)
 let prevEpisodeData = null; // { candles, trades, equity, episode, pnlPercent }
@@ -3263,10 +3264,10 @@ async function trainingStep() {
     currentEpisodeSteps.push({ step: metrics.steps, price: prices.btc, time: Date.now() });
     episodeEpsilons.push({ step: metrics.steps, epsilon: agent.epsilon });
     
-    // Episode end (every 100 steps) — save to history before reset
-    if (done || (metrics.steps > 0 && metrics.steps % 100 === 0)) {
-        // Capture episode number BEFORE starting next episode (startEpisode increments)
-        const completedEpisode = agent.episode;
+    // Episode end — detect by episode increment (episode changes when env.reset + startEpisode called)
+    if (episodeAtStart < agent.episode) {
+        // episodeAtStart is the episode that just finished
+        const completedEpisode = episodeAtStart;
 
         // Save episode summary to history
         const endEquity = env.balance();

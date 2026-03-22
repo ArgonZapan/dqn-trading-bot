@@ -3321,7 +3321,8 @@ async function trainingStep() {
         }).catch(() => {});
 
         // Update hyperparameter optimizer with episode metrics
-        const winCount = completedTrades.filter(t => t.action === 'BUY' && t.pnl > 0).length;
+        // FIX: count all profitable trades regardless of action type (BUY, SHORT, SELL, COVER)
+        const winCount = completedTrades.filter(t => t.pnl > 0).length;
         const episodeHyperparams = {
             learningRate: agent.learningRate || 0.0005,
             gamma: agent.gamma || 0.99,

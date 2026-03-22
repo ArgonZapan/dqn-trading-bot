@@ -2728,14 +2728,14 @@ const server = http.createServer(async (req, res) => {
     }
     
     // GET /api/alerts/config - get alert settings (no secrets)
-    if (url === '/api/alerts/config' && method === 'GET') {
+    if (url === '/api/alerts/config' && req.method === 'GET') {
         const a = getAlerter();
         res.end(JSON.stringify(a.getConfig()));
         return;
     }
     
     // POST /api/alerts/config - update alert settings
-    if (url === '/api/alerts/config' && method === 'POST') {
+    if (url === '/api/alerts/config' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => body += chunk);
         req.on('end', () => {
@@ -2763,7 +2763,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // POST /api/risk/config - update risk parameters
-    if (url === '/api/risk/config' && method === 'POST') {
+    if (url === '/api/risk/config' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => body += chunk);
         req.on('end', () => {

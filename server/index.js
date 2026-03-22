@@ -17,6 +17,7 @@ const TRAILING_DISTANCE = 0.75; // % below peak price for trailing SL
 const tradeJournal = require('../src/tradeJournal');
 const Rebalancer = require('../src/rebalancer');
 const { sentimentAnalyzer } = require('../src/sentimentAnalyzer');
+const VolatilityRegime = require('../src/volatilityRegime');
 
 // State
 let prices = { btc: 0, eth: 0, sol: 0 };
@@ -63,6 +64,14 @@ function paperLog(...args) {
 let paperCandles = { btc: [], eth: [], sol: [] };
 let paperStrategy = 'trend';
 let htfState = { h1: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 }, h4: { trend: 'neutral', rsi: 50, ema200Dist: 0, volumeRatio: 1 } };
+
+// ─── Volatility Regime State ────────────────────────────────────────────────
+const paperVolRegime = new VolatilityRegime();  // Per-asset regime instances
+const paperVolRegimes = {};  // { BTC: VolatilityRegime, ETH: VolatilityRegime, SOL: VolatilityRegime }
+for (const asset of REBALANCE_ASSETS) {
+    paperVolRegimes[asset] = new VolatilityRegime();
+}
+let paperVolAlertPending = null; // Buffered regime-change alert for Telegram
 const HTF_UPDATE_INTERVAL = 60000; // Update HTF every 60s
 let lastHtfUpdate = 0;
 let paperPositionSize = 0.95;
@@ -875,7 +884,33 @@ async function paperTradingStep() {
     const ind = calcIndicators(candles);
     const signal = paperSignal(candles, ind, htfState);
     
-    // Update unrealized P&L and check SL/TP + Trailing Stop
+    // ── Volatility Regime Update ─────────────────────────────────────────────
+    const lastCandle = candles[candles.length - 1];
+    const volState = paperVolRegime.update(lastCandle, currentPrice);
+    
+    // Buffer regime change alerts (send only once per transition)
+    if (volState.alert && !paperVolAlertPending) {
+        paperVolAlertPending = volState.alert;
+    }
+    
+    // Flush alert at start of next cycle (avoid alert spam)
+    if (paperVolAlertPending && now % 5000 < 100) {
+        const alert = paperVolAlertPending;
+        paperLog(`⚠️ VOLATILITY REGIME CHANGE: ${alert.from} → ${alert.to} (ATR: ${(alert.atrPct * 100).toFixed(3)}%)`);
+        paperVolAlertPending = null;
+    }
+    
+    // Regime-adjusted trading parameters
+    const baseSL = paperTrading.stopLoss;    // e.g. 2.0%
+    const baseTP = paperTrading.takeProfit;   // e.g. 4.0%
+    const basePosSize = paperPositionSize;    // e.g. 0.95 (95% of capital)
+    
+    // Adjust SL/TP/position based on regime multipliers
+    const adjSL = baseSL * volState.slMult;     // wider in volatile markets
+    const adjTP = baseTP * volState.slMult;     // scale TP proportionally
+    const adjPosSize = Math.min(basePosSize * volState.positionMult, 0.95); // reduce in volatile markets
+    
+    // ── Update unrealized P&L and check SL/TP + Trailing Stop
     let slTpTriggered = false;
     let slTpReason = '';
     const TRAILING_ACTIVATION = 1.0; // % profit before trailing activates
@@ -959,10 +994,10 @@ async function paperTradingStep() {
     // Execute trades (only if not SL/TP triggered)
     if (signal === 'BUY' && !paperOpenPosition) {
         // OPEN LONG
-        const qty = (paperTrading.capital * paperPositionSize) / currentPrice;
+        const qty = (paperTrading.capital * adjPosSize) / currentPrice;
         const fee = currentPrice * qty * 0.001;
-        const sl = currentPrice * (1 - paperTrading.stopLoss / 100);
-        const tp = currentPrice * (1 + paperTrading.takeProfit / 100);
+        const sl = currentPrice * (1 - adjSL / 100);
+        const tp = currentPrice * (1 + adjTP / 100);
         paperOpenPosition = {
             id: `paper_${now}`,
             side: 'LONG',
@@ -973,21 +1008,23 @@ async function paperTradingStep() {
             pnlPct: 0,
             entryTime: now,
             stopLoss: sl,
-            takeProfit: tp
+            takeProfit: tp,
+            regimeAtEntry: volState.regime,   // Record regime at entry
+            baseSLCorrection: adjSL / baseSL   // Ratio for dynamic re-adjustment
         };
         paperTrading.positions = [paperOpenPosition];
         paperTrading.capital -= qty * currentPrice + fee;
         paperLastTradeTime = now;
-        console.log(`📈 PAPER LONG: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
-        paperLog('OPEN LONG | Qty:', qty.toFixed(6), 'BTC | Entry: $' + currentPrice.toLocaleString(), '| SL: $' + sl.toFixed(2), '| TP: $' + tp.toFixed(2));
+        console.log(`📈 PAPER LONG [${volState.regime}]: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)} | pos: ${(adjPosSize*100).toFixed(0)}%`);
+        paperLog('OPEN LONG | Qty:', qty.toFixed(6), 'BTC | Entry: $' + currentPrice.toLocaleString(), '| SL: $' + sl.toFixed(2), '| TP: $' + tp.toFixed(2), '| Regime:', volState.regime);
         // Trade alert
-        getAlerter().tradeAlert('BUY', currentPrice, qty, 0, paperPositionSize * 100).catch(() => {});
+        getAlerter().tradeAlert('BUY', currentPrice, qty, 0, adjPosSize * 100).catch(() => {});
     } else if (signal === 'SHORT' && !paperOpenPosition) {
         // OPEN SHORT - borrow and sell, profit from price drop
-        const qty = (paperTrading.capital * paperPositionSize) / currentPrice;
+        const qty = (paperTrading.capital * adjPosSize) / currentPrice;
         const fee = currentPrice * qty * 0.001;
-        const sl = currentPrice * (1 + paperTrading.stopLoss / 100); // SL above entry for SHORT
-        const tp = currentPrice * (1 - paperTrading.takeProfit / 100); // TP below entry for SHORT
+        const sl = currentPrice * (1 + adjSL / 100); // SL above entry for SHORT
+        const tp = currentPrice * (1 - adjTP / 100); // TP below entry for SHORT
         paperOpenPosition = {
             id: `paper_${now}`,
             side: 'SHORT',
@@ -998,15 +1035,17 @@ async function paperTradingStep() {
             pnlPct: 0,
             entryTime: now,
             stopLoss: sl,
-            takeProfit: tp
+            takeProfit: tp,
+            regimeAtEntry: volState.regime,
+            baseSLCorrection: adjSL / baseSL
         };
         paperTrading.positions = [paperOpenPosition];
         paperTrading.capital += qty * currentPrice - fee; // Receive USDT from short sale
         paperLastTradeTime = now;
-        console.log(`📉 PAPER SHORT: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)}`);
-        paperLog('OPEN SHORT | Qty:', qty.toFixed(6), 'BTC | Entry: $' + currentPrice.toLocaleString(), '| SL: $' + sl.toFixed(2), '| TP: $' + tp.toFixed(2));
+        console.log(`📉 PAPER SHORT [${volState.regime}]: ${qty.toFixed(6)} BTC @ $${currentPrice.toLocaleString()} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)} | pos: ${(adjPosSize*100).toFixed(0)}%`);
+        paperLog('OPEN SHORT | Qty:', qty.toFixed(6), 'BTC | Entry: $' + currentPrice.toLocaleString(), '| SL: $' + sl.toFixed(2), '| TP: $' + tp.toFixed(2), '| Regime:', volState.regime);
         // Trade alert
-        getAlerter().tradeAlert('SHORT', currentPrice, qty, 0, paperPositionSize * 100).catch(() => {});
+        getAlerter().tradeAlert('SHORT', currentPrice, qty, 0, adjPosSize * 100).catch(() => {});
     } else if ((signal === 'SELL' || slTpTriggered) && paperOpenPosition) {
         // CLOSE position (不管是 LONG 还是 SHORT)
         let pnl, exitValue;
@@ -1189,6 +1228,8 @@ const server = http.createServer(async (req, res) => {
             takeProfit: paperTrading.takeProfit,
             trailingActivation: TRAILING_ACTIVATION,
             trailingDistance: TRAILING_DISTANCE,
+            // Volatility Regime
+            volatilityRegime: paperVolRegime.getSummary(),
             // Multi-asset rebalancing
             rebalanceEnabled: paperRebalanceEnabled,
             rebalanceThreshold: paperRebalanceThreshold,

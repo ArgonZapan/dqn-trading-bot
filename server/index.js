@@ -2659,6 +2659,11 @@ const server = http.createServer(async (req, res) => {
             trainingStartTime = Date.now();
 
             agent.startEpisode();
+            // Reset epsilon for exploration if model was loaded with minimum epsilon
+            if (agent.epsilon <= agent.epsilonMin + 0.001) {
+                agent.epsilon = 0.9;
+                console.log('🔄 Epsilon reset to 0.9 for fresh exploration');
+            }
             episodeTrades = [];
             currentEpisodeSteps = [];
             episodeEpsilons = [];
@@ -3367,10 +3372,13 @@ async function trainingStep() {
         episodeEpsilons = [];
         episodeEquity = [];
 
-        // Fetch fresh candles for new episode (no stale data reuse)
+        // Fetch fresh candles for new episode
         const newCandles = await fetchCandles('BTCUSDT', '1m', 200);
         if (newCandles.length >= 60) {
             env.reset(newCandles);
+        } else {
+            // If fetch fails, reuse existing candles to avoid done-loop
+            env.reset(env.candles);
         }
         episodeStartBalance = env.balance();
 

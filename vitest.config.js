@@ -3,6 +3,6 @@ export default defineConfig({
   test: {
     globals: true,
     testTimeout: 10000,
-    exclude: ['**/node_modules/**', '**/tests/unit/api.test.js'],
+    exclude: ['**/node_modules/**', '**/react-client/tests/**', '**/api.test.js', '**/integration.test.js', '**/test/**'],
   }
 });

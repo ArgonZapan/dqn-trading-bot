@@ -1583,6 +1583,35 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // Scalp params API
+    if (url === '/api/paper-trading/scalp-params') {
+        const params = new URL(req.url, `http://${req.headers.host}`).searchParams;
+        const pt = parseFloat(params.get('profitTarget'));
+        const sl = parseFloat(params.get('stopLoss'));
+        const mv = parseFloat(params.get('minVolume'));
+        const mom = parseInt(params.get('momentum'));
+        const mh = parseInt(params.get('maxHold'));
+        const tf = params.get('timeframe');
+
+        if (!isNaN(pt) && pt > 0 && pt <= 10) paperTrading.scalpProfitTarget = pt;
+        if (!isNaN(sl) && sl > 0 && sl <= 10) paperTrading.scalpStopLoss = sl;
+        if (!isNaN(mv) && mv > 0) paperTrading.scalpMinVolume = mv;
+        if (!isNaN(mom) && mom >= 0 && mom <= 100) paperTrading.scalpMomentum = mom;
+        if (!isNaN(mh) && mh > 0) paperTrading.scalpMaxHold = mh;
+        if (tf) paperTrading.scalpTimeframe = tf;
+
+        res.end(JSON.stringify({
+            success: true,
+            profitTarget: paperTrading.scalpProfitTarget || 0.5,
+            stopLoss: paperTrading.scalpStopLoss || 0.3,
+            minVolume: paperTrading.scalpMinVolume || 1.5,
+            momentum: paperTrading.scalpMomentum || 60,
+            maxHold: paperTrading.scalpMaxHold || 900,
+            timeframe: paperTrading.scalpTimeframe || '5m'
+        }));
+        return;
+    }
+
     // POST /api/paper-trading/rebalance-config - configure multi-asset rebalancing
     if (url === '/api/paper-trading/rebalance-config' && req.method === 'POST') {
         let body = '';
@@ -2198,8 +2227,7 @@ const server = http.createServer(async (req, res) => {
     if (url === '/api/strategy/compare') {
         const { BinanceClient } = require('../src/services/BinanceClient');
         const client = new BinanceClient();
-        const { trendFollowing, meanReversion, momentum, macdCrossover } = require('../src/strategies');
-        const { ScalpingStrategy } = require('../src/strategies/scalpingStrategy');
+        const { trendFollowing, meanReversion, momentum, macdCrossover, scalping } = require('../src/strategies');
         const { GridStrategy } = require('../src/strategies/gridStrategy');
 
         const STRATS = [
@@ -2207,8 +2235,8 @@ const server = http.createServer(async (req, res) => {
             { id: 'mean_reversion',name: '↔️ Mean Rev',    fn: (env) => meanReversion(env) },
             { id: 'momentum',      name: '💨 Momentum',    fn: (env) => momentum(env, null) },
             { id: 'macd',          name: '〰️ MACD',        fn: (env) => macdCrossover(env, null) },
-            { id: 'scalping',      name: '⚡ Scalping',    fn: (env) => new ScalpingStrategy().decide(env.getState(), env) },
-            { id: 'grid',          name: '🔲 Grid',        fn: (env) => new GridStrategy().decide(env.getState(), env) },
+            { id: 'scalping',      name: '⚡ Scalping',    fn: scalping },
+            { id: 'grid',          name: '🔲 Grid',        fn: (env) => { const gs = new GridStrategy(); return gs.getAction(env.currentPrice(), env.position, env.entryPrice); } },
         ];
 
         const CANDLES = 300;   // lookback window
@@ -2222,7 +2250,8 @@ const server = http.createServer(async (req, res) => {
 
                 const env = new (require('../src/environment'))(pair, 30);
                 env.reset(klines);
-                let pos = 0, entry = 0, btc = 0, cash = CAPITAL;
+                let pos = 0, entry = 0, qty = 0, cash = CAPITAL;
+                let cashBeforeEntry = cash;
                 const trades = [];
 
                 while (true) {
@@ -2231,14 +2260,18 @@ const server = http.createServer(async (req, res) => {
                     if (!price) break;
 
                     if (action === 1 && pos === 0) {
-                        btc = (cash * 0.95) / price;
-                        cash = cash * 0.95 - btc * price * FEE;
+                        // OPEN LONG
+                        cashBeforeEntry = cash;
+                        qty = (cash * 0.95) / price;
+                        cash -= qty * price * (1 + FEE); // cost + entry fee
                         pos = 1; entry = price;
                     } else if (action === 2 && pos === 1) {
-                        const pnl = (price - entry) * btc - price * btc * FEE;
-                        cash += pnl + btc * price * (1 - FEE);
+                        // CLOSE LONG
+                        const proceeds = qty * price * (1 - FEE);
+                        const pnl = proceeds - (cashBeforeEntry - cash); // actual P&L
+                        cash = cashBeforeEntry + pnl;
                         trades.push({ pnl, side: 'LONG' });
-                        btc = 0; pos = 0;
+                        qty = 0; pos = 0;
                     }
 
                     env.step++;
@@ -2248,9 +2281,11 @@ const server = http.createServer(async (req, res) => {
                 // Close open position
                 if (pos === 1) {
                     const price = klines[klines.length - 1].close;
-                    const pnl = (price - entry) * btc - price * btc * FEE;
-                    cash += pnl + btc * price * (1 - FEE);
+                    const proceeds = qty * price * (1 - FEE);
+                    const pnl = proceeds - (cashBeforeEntry - cash);
+                    cash = cashBeforeEntry + pnl;
                     trades.push({ pnl, side: 'LONG' });
+                    qty = 0; pos = 0;
                 }
 
                 const finalEquity = cash;
@@ -2434,8 +2469,7 @@ const server = http.createServer(async (req, res) => {
     // GET /api/strategy/compare/chart - lightweight data for bar charts
     if (url === '/api/strategy/compare/chart') {
         const { BinanceClient } = require('../src/services/BinanceClient');
-        const { trendFollowing, meanReversion, momentum, macdCrossover } = require('../src/strategies');
-        const { ScalpingStrategy } = require('../src/strategies/scalpingStrategy');
+        const { trendFollowing, meanReversion, momentum, macdCrossover, scalping } = require('../src/strategies');
         const { GridStrategy } = require('../src/strategies/gridStrategy');
 
         const STRATS = [
@@ -2443,8 +2477,8 @@ const server = http.createServer(async (req, res) => {
             { id: 'mean_reversion',name: '↔️ Mean Rev',    fn: (env) => meanReversion(env) },
             { id: 'momentum',      name: '💨 Momentum',    fn: (env) => momentum(env, null) },
             { id: 'macd',          name: '〰️ MACD',        fn: (env) => macdCrossover(env, null) },
-            { id: 'scalping',      name: '⚡ Scalping',    fn: (env) => new ScalpingStrategy().decide(env.getState(), env) },
-            { id: 'grid',          name: '🔲 Grid',        fn: (env) => new GridStrategy().decide(env.getState(), env) },
+            { id: 'scalping',      name: '⚡ Scalping',    fn: scalping },
+            { id: 'grid',          name: '🔲 Grid',        fn: (env) => { const gs = new GridStrategy(); return gs.getAction(env.currentPrice(), env.position, env.entryPrice); } },
         ];
 
         const CAP = 1000;
@@ -2460,27 +2494,30 @@ const server = http.createServer(async (req, res) => {
 
                     const env = new (require('../src/environment'))('BTCUSDT', 30);
                     env.reset(klines);
-                    let pos = 0, entry = 0, btc = 0, cash = CAP;
+                    let pos = 0, entry = 0, qty = 0, cash = CAP;
+                    let cashBeforeEntry = cash;
 
                     while (true) {
                         const action = strategyFn(env);
                         const price = klines[env.step]?.close || 0;
                         if (!price) break;
                         if (action === 1 && pos === 0) {
-                            btc = (cash * 0.95) / price;
-                            cash = cash * 0.95 - btc * price * 0.001;
+                            cashBeforeEntry = cash;
+                            qty = (cash * 0.95) / price;
+                            cash -= qty * price * 1.001;
                             pos = 1; entry = price;
                         } else if (action === 2 && pos === 1) {
-                            const pnl = (price - entry) * btc - price * btc * 0.001;
-                            cash += pnl + btc * price * 0.999;
-                            btc = 0; pos = 0;
+                            const proceeds = qty * price * 0.999;
+                            cash = cashBeforeEntry + (proceeds - (cashBeforeEntry - cash));
+                            qty = 0; pos = 0;
                         }
                         env.step++;
                         if (env.step >= klines.length - 1) break;
                     }
                     if (pos === 1) {
                         const price = klines[klines.length - 1].close;
-                        cash += (price - entry) * btc - price * btc * 0.001 + btc * price * 0.999;
+                        const proceeds = qty * price * 0.999;
+                        cash = cashBeforeEntry + (proceeds - (cashBeforeEntry - cash));
                     }
 
                     const finalEquity = cash;
@@ -3266,7 +3303,7 @@ async function updatePrices() {
 // Update HTF (higher timeframe) trends - called every 60s
 async function updateHtfTrends() {
     try {
-        const { BinanceClient } = require('../dist/src/services/BinanceClient');
+        const { BinanceClient } = require('../src/services/BinanceClient');
         const client = new BinanceClient();
         const [h1, h4] = await Promise.all([
             client.getHTFTrend('BTCUSDT', '1h'),

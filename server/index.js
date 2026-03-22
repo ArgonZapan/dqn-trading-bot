@@ -3171,15 +3171,15 @@ async function trainingStep() {
     
     // Store experience
     agent.remember(state, action, reward, newState, done);
-    
+
+    // Train
+    const loss = await agent.replay();
+    if (loss !== null) metrics.loss = loss;
+
     // Track buffer health
     const flatState = agent.flattenState ? agent.flattenState(state) : state;
     bufferHealth.recordSample({ state: flatState, action, reward }, loss !== null ? Math.abs(loss) : null);
     bufferHealth.updateBufferSize(agent.buffer?.length || 0, 10000);
-    
-    // Train
-    const loss = await agent.replay();
-    if (loss !== null) metrics.loss = loss;
     
     // Track price and epsilon
     currentEpisodeSteps.push({ step: metrics.steps, price: prices.btc, time: Date.now() });

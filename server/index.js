@@ -492,7 +492,7 @@ async function checkEpisodeAlerts(episodeNum, endEquity, pnlPct, tradesCount) {
 // Model persistence config
 const MODEL_SAVE_INTERVAL_MS = parseInt(process.env.MODEL_SAVE_INTERVAL_MS || '600000'); // 10 min default
 
-// Episode tracking for chart
+// Episode tracking for chart — simple: each tick = 1 candle
 let episodeTrades = [];
 let currentEpisodeSteps = [];
 let episodeEpsilons = [];
@@ -500,12 +500,9 @@ let episodeEquity = [];
 let episodeStartBalance = 1000;
 let prevEpisode = 0;
 
-// New dual-array episode data (raw steps, bucketed on frontend)
-let currentEpSteps = []; // [{step, time, price, action, equity}]
-let prevEpData = [];     // copy from previous episode
-
-// Previous episode data (for "Poprzedni Epizod" chart)
-let prevEpisodeData = null; // { candles, trades, equity, episode, pnlPercent }
+// New simplified episode data: each tick = 1 OHLC candle
+let currentEpData = []; // [{time, open, high, low, close, action}]
+let prevEpData = [];    // [{time, open, high, low, close, action}] — from previous episode
 
 // Episode history (completed episodes)
 let episodeHistory = [];
@@ -574,27 +571,6 @@ function fetchJSON(url) {
             r.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
         }).on('error', reject);
     });
-}
-
-// Dynamic candle generation for completed episodes (~20 candles target)
-function generateCandles(steps, targetCandleCount = 20) {
-    if (steps.length < 2) return [];
-    const totalTime = steps[steps.length - 1].time - steps[0].time;
-    const bucketSizeMs = Math.max(100, Math.floor(totalTime / targetCandleCount)); // min 100ms
-    const startTime = steps[0].time;
-    const buckets = {};
-    for (const step of steps) {
-        const t = step.time || Date.now();
-        const bucket = Math.floor((t - startTime) / bucketSizeMs);
-        if (!buckets[bucket]) {
-            buckets[bucket] = { time: startTime + bucket * bucketSizeMs, open: step.price, high: step.price, low: step.price, close: step.price };
-        } else {
-            buckets[bucket].high = Math.max(buckets[bucket].high, step.price);
-            buckets[bucket].low = Math.min(buckets[bucket].low, step.price);
-            buckets[bucket].close = step.price;
-        }
-    }
-    return Object.values(buckets).sort((a, b) => a.time - b.time);
 }
 
 // Fetch Binance klines (candles)
@@ -1280,62 +1256,10 @@ const server = http.createServer(async (req, res) => {
     }
     
     if (url === '/api/episode-data') {
-        // New format: return raw step arrays (frontend does bucketing)
-        const currentEp = {
-            steps: currentEpSteps,
-            // Legacy fields for backward compat
-            candles: (() => {
-                if (currentEpisodeSteps.length === 0) return [];
-                const bucketSize = 5;
-                const buckets = {};
-                for (const p of currentEpisodeSteps) {
-                    const t = p.time || Date.now();
-                    const bucketKey = Math.floor(t / (bucketSize * 1000)) * bucketSize;
-                    if (!buckets[bucketKey]) {
-                        buckets[bucketKey] = { time: bucketKey, open: p.price, high: p.price, low: p.price, close: p.price };
-                    } else {
-                        buckets[bucketKey].high = Math.max(buckets[bucketKey].high, p.price);
-                        buckets[bucketKey].low = Math.min(buckets[bucketKey].low, p.price);
-                        buckets[bucketKey].close = p.price;
-                    }
-                }
-                return Object.values(buckets).sort((a, b) => a.time - b.time);
-            })(),
-            trades: episodeTrades,
-            equity: episodeEquity,
-            prices: currentEpisodeSteps,
-            epsilons: episodeEpsilons,
-            episode: agent.episode
-        };
-
-        const prevEp = prevEpData.length > 0 ? {
-            steps: prevEpData,
-            // Build candles from raw steps for legacy compat
-            candles: generateCandles(prevEpData, 20),
-            trades: prevEpisodeData?.trades || [],
-            equity: prevEpisodeData?.equity || [],
-            episode: prevEpisodeData?.episode ?? null,
-            pnlPercent: prevEpisodeData?.pnlPercent || 0
-        } : (prevEpisodeData ? {
-            // Fallback: if prevEpData is empty but prevEpisodeData has old format
-            steps: [],
-            candles: prevEpisodeData.candles,
-            trades: prevEpisodeData.trades,
-            equity: prevEpisodeData.equity,
-            episode: prevEpisodeData.episode,
-            pnlPercent: prevEpisodeData.pnlPercent
-        } : { steps: [], candles: [], trades: [], equity: [], episode: null, pnlPercent: 0 });
-
+        // Simple: each tick = 1 OHLC candle, no bucketing
         res.end(JSON.stringify({
-            currentEp,
-            prevEp,
-            // Legacy top-level fields
-            prices: currentEpisodeSteps,
-            trades: episodeTrades,
-            epsilons: episodeEpsilons,
-            equity: episodeEquity,
-            candles: currentEp.candles,
-            episode: agent.episode
+            currentEp: { candles: currentEpData },
+            prevEp: { candles: prevEpData }
         }));
         return;
     }
@@ -2701,7 +2625,7 @@ const server = http.createServer(async (req, res) => {
             currentEpisodeSteps = [];
             episodeEpsilons = [];
             episodeEquity = [];
-            currentEpSteps = [];
+            currentEpData = [];
             metrics.steps = 0; // Reset step counter for new training session
             console.log('▶ Training started');
             // Training start alert
@@ -3301,15 +3225,17 @@ async function trainingStep() {
     currentEpisodeSteps.push({ step: metrics.steps, price: trainingPrice, time: Date.now() });
     episodeEpsilons.push({ step: metrics.steps, epsilon: agent.epsilon });
 
-    // New episode data for frontend bucketing
-    const epAction = action === 0 ? 'HOLD' : action === 1 ? 'BUY' : 'SELL';
+    // Each tick = 1 OHLC candle (open=high=low=close=price)
+    const tickAction = action === 0 ? 'HOLD' : action === 1 ? 'BUY' : 'SELL';
+    // Check if a trade was just executed (override HOLD with actual trade action)
     const epTrade = tradesAfter.length > episodeTrades.length ? episodeTrades[episodeTrades.length - 1]?.action : null;
-    currentEpSteps.push({
-      step: metrics.steps,
-      time: Date.now(),
-      price: trainingPrice,
-      action: epTrade || epAction,
-      equity: currentBalance
+    currentEpData.push({
+      time: Math.floor(Date.now() / 1000),
+      open: trainingPrice,
+      high: trainingPrice,
+      low: trainingPrice,
+      close: trainingPrice,
+      action: epTrade || tickAction
     });
 
     metrics.bufferSize = agent.buffer.length;
@@ -3388,25 +3314,16 @@ async function trainingStep() {
         bufferHealth.recordEpisode(pnlPercent, metrics.steps);
         bufferHealth.resetActionCounts();
         
-        // Save current episode data to prevEpisodeData BEFORE reset
-        // Use dynamic bucket size so we always get ~20 candles for completed episodes
-        prevEpisodeData = {
-            candles: generateCandles(currentEpisodeSteps, 20),
-            trades: [...episodeTrades],
-            equity: [...episodeEquity],
-            episode: completedEpisode,
-            pnlPercent
-        };
-
-        // New: copy raw steps to prevEpData for frontend bucketing
-        prevEpData = [...currentEpSteps];
+        // New: copy raw candles to prevEpData, reset currentEpData
+        prevEpData = [...currentEpData];
+        currentEpData = [];
 
         // Reset episode tracking state BEFORE starting new episode
         episodeTrades = [];
         currentEpisodeSteps = [];
         episodeEpsilons = [];
         episodeEquity = [];
-        currentEpSteps = [];
+        currentEpData = [];
 
         // Fetch fresh candles for new episode
         const newCandles = await fetchCandles('BTCUSDT', '1m', 200);

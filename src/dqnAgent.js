@@ -200,8 +200,10 @@ class DQNAgent {
                 return maxIdx;
             }
 
-            const result = qValues.argMax(1).dataSync()[0];
+            const argMaxTensor = qValues.argMax(1);
+            const result = argMaxTensor.dataSync()[0];
             qValues.dispose();
+            argMaxTensor.dispose();
             return result;
         });
     }

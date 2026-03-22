@@ -2006,6 +2006,51 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // GET /api/backtest/scalping - Full scalping backtest with TP/SL/maxHoldTime
+    if (url.startsWith('/api/backtest/scalping')) {
+        const binance = require('../src/services/BinanceClient');
+        const { backtestScalpingStrategy } = require('../src/strategies/scalpingStrategy');
+        const urlParts = url.split('?');
+        const query = new URLSearchParams(urlParts[1] || '');
+        const pair = query.get('pair') || 'BTCUSDT';
+        const interval = query.get('interval') || '5m';
+        const candles = parseInt(query.get('candles')) || 300;
+        const profitTarget = parseFloat(query.get('profitTarget')) || 0.5;
+        const stopLoss = parseFloat(query.get('stopLoss')) || 0.3;
+        const minVolume = parseFloat(query.get('minVolume')) || 1.5;
+        const momentumThreshold = parseInt(query.get('momentumThreshold')) || 60;
+        const maxHoldTime = parseInt(query.get('maxHoldTime')) || 900;
+        const capital = parseFloat(query.get('capital')) || 1000;
+
+        const client = new binance();
+        client.getKlines(pair, interval, candles).then(klines => {
+            if (!klines || klines.length < 50) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: 'Insufficient klines data' }));
+                return;
+            }
+            const result = backtestScalpingStrategy(klines, {
+                profitTarget,
+                stopLoss,
+                minVolume,
+                momentumThreshold,
+                maxHoldTime,
+                initialBalance: capital
+            });
+            res.json({
+                strategy: 'scalping',
+                pair,
+                interval,
+                params: { profitTarget, stopLoss, minVolume, momentumThreshold, maxHoldTime, initialBalance: capital },
+                ...result
+            });
+        }).catch(e => {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: e.message }));
+        });
+        return;
+    }
+
     // GET /api/strategy/compare/chart - lightweight data for bar charts
     if (url === '/api/strategy/compare/chart') {
         const binance = require('../src/services/BinanceClient');

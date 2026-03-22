@@ -499,7 +499,7 @@ gridStrategy.GRID_COUNT = gridParams.gridCount;
 gridStrategy.GRID_SPACING = gridParams.gridSpacing;
 
 const env = new Env('BTCUSDT', 59);
-const agent = new Agent(300, 3);
+const agent = new Agent(394, 3);
 const hyperopt = new Hyperopt();
 const rebalancer = new Rebalancer({ enabled: false, threshold: 0.05 });
 const mlFeatures = new MLFeatures();
@@ -1151,6 +1151,58 @@ const server = http.createServer(async (req, res) => {
     
     if (url === '/api/portfolio') {
         res.end(JSON.stringify(portfolio));
+        return;
+    }
+
+    // GET /api/portfolio/heatmap - Portfolio allocation heatmap
+    if (url === '/api/portfolio/heatmap') {
+        const totalEquity = paperFreeCapital() + paperMultiPositionsValue();
+        const assets = [];
+        let totalPnl = 0;
+
+        // Free capital as USDT
+        if (paperFreeCapital() > 0) {
+            const changePct = 0; // No change for cash
+            assets.push({
+                symbol: 'USDT',
+                value: paperFreeCapital(),
+                allocation: (paperFreeCapital() / totalEquity) * 100,
+                change: changePct,
+                pnl: 0
+            });
+        }
+
+        // Multi-asset positions
+        for (const asset of REBALANCE_ASSETS) {
+            const pos = paperMultiPositions[asset];
+            const currentValue = paperAssetPositionValue(asset);
+            const unrealizedPnl = paperAssetUnrealizedPnl(asset);
+            const priceData = prices[REBALANCE_PAIRS[asset].symbol];
+
+            if (currentValue > 0 || pos) {
+                const entryValue = pos ? pos.entryPrice * pos.quantity : 0;
+                const changePct = entryValue > 0 ? ((currentValue - entryValue) / entryValue) * 100 : 0;
+
+                assets.push({
+                    symbol: asset,
+                    value: currentValue,
+                    allocation: (currentValue / totalEquity) * 100,
+                    change: parseFloat(changePct.toFixed(2)),
+                    pnl: parseFloat(unrealizedPnl.toFixed(2))
+                });
+                totalPnl += unrealizedPnl;
+            }
+        }
+
+        // Sort by allocation descending
+        assets.sort((a, b) => b.allocation - a.allocation);
+
+        res.end(JSON.stringify({
+            assets,
+            totalValue: totalEquity,
+            totalPnl: parseFloat(totalPnl.toFixed(2)),
+            totalPnlPercent: totalEquity > 0 ? parseFloat(((totalPnl / totalEquity) * 100).toFixed(2)) : 0
+        }));
         return;
     }
     

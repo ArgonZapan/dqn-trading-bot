@@ -549,6 +549,23 @@ Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
 </div>
 </div>
 </div>
+<!-- Portfolio Heatmap -->
+<div class="card" style="margin-top:16px">
+<div class="card-header">🟨 Portfolio Heatmap</div>
+<div class="card-body">
+<div id="heatmapContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px;min-height:120px">
+<div style="text-align:center;color:var(--text2);font-size:.7rem;padding:40px 0">Loading heatmap...</div>
+</div>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;font-size:.65rem;color:var(--text2)">
+<div style="display:flex;align-items:center;gap:4px">
+<span>Loss</span>
+<canvas id="heatmapLegend" width="80" height="10" style="border-radius:3px"></canvas>
+<span>Profit</span>
+</div>
+<div id="heatmapTotal">Total: --</div>
+</div>
+</div>
+</div>
 <div class="card" style="margin-top:16px">
 <div class="card-header">📈 Trading</div>
 <div class="card-body">
@@ -840,6 +857,9 @@ Kliknij <strong>⚡ Compare</strong> aby przetestować wszystkie strategie na os
 Kliknij <strong>▶ Run</strong> aby uruchomić 1000 symulacji Monte Carlo na krzywej kapitału
 </div>
 <div id="monteCarloResults" style="display:none">
+<canvas id="monteCarloChart" style="height:180px;margin-bottom:8px;max-height:180px"></canvas>
+<div style="font-size:.6rem;color:var(--text2);margin-bottom:10px;text-align:center">📊 Fan Chart — Equity Percentiles (P5/P25/Median/P75/P95)</div>
+<canvas id="fanChart" style="height:180px;margin-bottom:12px;max-height:180px"></canvas>
 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
 <div class="metric-box">
 <div class="metric-label">VaR 95%</div>
@@ -1798,6 +1818,59 @@ async function rebalanceNow(){
   } catch(e){log('Rebalance error: '+e.message,'error');}
 }
 
+// Portfolio Heatmap update
+async function updateHeatmap() {
+  try {
+    const d = await fetch('/api/portfolio/heatmap').then(r => r.json());
+    const container = document.getElementById('heatmapContainer');
+    if (!container) return;
+
+    if (!d.assets || d.assets.length === 0) {
+      container.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:.7rem;padding:40px 0">No assets</div>';
+      return;
+    }
+
+    container.innerHTML = '';
+    for (const asset of d.assets) {
+      const change = asset.change || 0;
+      const color = change >= 2 ? 'var(--green)' : change >= 0 ? 'var(--yellow)' : change >= -2 ? '#ff8c00' : 'var(--red)';
+      const textColor = Math.abs(change) > 1 ? '#fff' : 'var(--text)';
+      const opacity = 0.4 + Math.min(Math.abs(change) / 5 * 0.6, 0.6);
+
+      const div = document.createElement('div');
+      div.style.cssText = `background:${color};opacity:${opacity};border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;transition:all .3s ease;min-width:80px;position:relative;overflow:hidden`;
+      div.title = `${asset.symbol}\nValue: $${asset.value.toFixed(2)}\nP&L: ${asset.pnl >= 0 ? '+' : ''}$${asset.pnl.toFixed(2)}\nP&L %: ${asset.change >= 0 ? '+' : ''}${asset.change.toFixed(2)}%`;
+      div.innerHTML = `<div style="font-weight:700;font-size:.8rem;color:${textColor}">${asset.symbol}</div><div style="font-size:.6rem;color:${textColor};opacity:.9">${asset.allocation.toFixed(1)}%</div><div style="font-size:.6rem;color:${textColor};opacity:.9">${asset.change >= 0 ? '+' : ''}${asset.change.toFixed(2)}%</div>`;
+      container.appendChild(div);
+    }
+
+    // Update total
+    const totalEl = document.getElementById('heatmapTotal');
+    if (totalEl) {
+      totalEl.textContent = `Total: $${d.totalValue.toFixed(2)} | P&L: ${d.totalPnl >= 0 ? '+' : ''}$${d.totalPnl.toFixed(2)} (${d.totalPnlPercent >= 0 ? '+' : ''}${d.totalPnlPercent.toFixed(2)}%)`;
+    }
+
+    // Draw legend
+    const legend = document.getElementById('heatmapLegend');
+    if (legend && legend.getContext) {
+      const ctx = legend.getContext('2d');
+      const w = legend.width, h = legend.height;
+      const grad = ctx.createLinearGradient(0, 0, w, 0);
+      grad.addColorStop(0, '#ef4444');
+      grad.addColorStop(0.5, '#eab308');
+      grad.addColorStop(1, '#22c55e');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+    }
+  } catch(e) {
+    const container = document.getElementById('heatmapContainer');
+    if (container) container.innerHTML = '<div style="text-align:center;color:var(--red);font-size:.7rem;padding:20px">Error loading heatmap</div>';
+  }
+}
+
+// Trigger initial heatmap draw when DOM ready
+document.addEventListener('DOMContentLoaded', () => { setTimeout(updateHeatmap, 500); });
+
 async function updatePaperStatsFromJournal(){
   try {
     const r=await fetch('/api/paper-trading/trades').then(x=>x.json());
@@ -2578,11 +2651,13 @@ setInterval(update,2000);
 setInterval(updatePaperEquity,3000);
 setInterval(updateLiveTrading, 3000);
 setInterval(updateHTF, 15000); // Update HTF every 15s
+setInterval(updateHeatmap, 5000); // Update heatmap every 5s
 update();
 updatePaper();
 checkLiveConfig();
 updateLiveTrading();
 updateHTF();
+updateHeatmap(); // Initial heatmap load
 
 update();
 
@@ -2824,6 +2899,12 @@ async function runMonteCarlo() {
 
         loading.style.display = 'none';
         btn.textContent = '🔄 Re-run';
+        btn.disabled = false;
+
+        // Render Monte Carlo chart
+        renderMonteCarloChart(r);
+        // Render fan chart (equity percentile bands)
+        renderFanChart(r);
     } catch(e) {
         loading.style.display = 'none';
         empty.style.display = 'block';
@@ -2832,6 +2913,222 @@ async function runMonteCarlo() {
         btn.textContent = '▶ Run';
         btn.disabled = false;
     }
+}
+
+let monteCarloChart = null;
+
+function renderMonteCarloChart(data) {
+    const canvas = document.getElementById('monteCarloChart');
+    if (!canvas) return;
+
+    // Build terminal equity histogram from worst scenarios sorted by final equity
+    const scenarios = (data.worstScenarios || []).sort((a, b) => a.finalEquity - b.finalEquity);
+    const initial = 1000;
+    const labels = scenarios.map((s, i) => `S${i + 1}`);
+    const returns = scenarios.map(s => s.returnPct);
+
+    // Color each bar by outcome (red = loss, green = profit)
+    const colors = returns.map(r => r >= 0 ? '#3fb950' : '#f85149');
+    const borderColors = returns.map(r => r >= 0 ? '#2ea043' : '#da3633');
+
+    if (monteCarloChart) {
+        monteCarloChart.data.labels = labels;
+        monteCarloChart.data.datasets[0].data = returns;
+        monteCarloChart.data.datasets[0].backgroundColor = colors;
+        monteCarloChart.data.datasets[0].borderColor = borderColors;
+        // Annotate mean + median
+        const meanReturn = parseFloat(data.riskAdjustedReturn) || 0;
+        const probLoss = parseFloat(data.probabilityOfLoss) || 0;
+        monteCarloChart.options.plugins.tooltip.callbacks.label = function(ctx) {
+            const s = scenarios[ctx.dataIndex];
+            return [
+                `Final: $${s.finalEquity.toFixed(0)}`,
+                `Return: ${s.returnPct.toFixed(1)}%`,
+                `MaxDD: $${s.maxDrawdown.toFixed(0)}`,
+                `Wins: ${s.wins}`
+            ];
+        };
+        monteCarloChart.update('none');
+        return;
+    }
+
+    const ctx = canvas.getContext('2d');
+    monteCarloChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Return %',
+                data: returns,
+                backgroundColor: colors,
+                borderColor: borderColors,
+                borderWidth: 1,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            const s = scenarios[ctx.dataIndex];
+                            return [
+                                `Final: $${s.finalEquity.toFixed(0)}`,
+                                `Return: ${s.returnPct.toFixed(1)}%`,
+                                `MaxDD: $${s.maxDrawdown.toFixed(0)}`,
+                                `Wins: ${s.wins}`
+                            ];
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    title: { display: false },
+                    ticks: { font: { size: 8 }, color: '#6b7280' }
+                },
+                y: {
+                    title: { display: true, text: 'Return %', font: { size: 10 }, color: '#9ca3af' },
+                    ticks: { font: { size: 9 }, color: '#9ca3af', callback: v => v + '%' },
+                    grid: { color: '#1f2937' }
+                }
+            }
+        }
+    });
+}
+
+let fanChart = null;
+function renderFanChart(data) {
+    const canvas = document.getElementById('fanChart');
+    if (!canvas) return;
+
+    const bands = data.equityBands;
+    if (!bands || !bands.labels) return;
+
+    const labels = bands.labels;
+    const p5 = bands.p5;
+    const p25 = bands.p25;
+    const median = bands.median;
+    const p75 = bands.p75;
+    const p95 = bands.p95;
+    const initial = data.initialCapital || 1000;
+
+    // Thin labels to avoid crowding (show every Nth)
+    const step = Math.max(1, Math.floor(labels.length / 20));
+    const displayLabels = labels.map((l, i) => i % step === 0 ? l : '');
+    const displayMedian = median.map((_, i) => i % step === 0 ? median[i] : null);
+    const displayP5 = p5.map((_, i) => i % step === 0 ? p5[i] : null);
+    const displayP95 = p95.map((_, i) => i % step === 0 ? p95[i] : null);
+    const displayP25 = p25.map((_, i) => i % step === 0 ? p25[i] : null);
+    const displayP75 = p75.map((_, i) => i % step === 0 ? p75[i] : null);
+
+    if (fanChart) {
+        fanChart.data.labels = displayLabels;
+        fanChart.data.datasets[0].data = displayP95;
+        fanChart.data.datasets[1].data = displayP75;
+        fanChart.data.datasets[2].data = displayMedian;
+        fanChart.data.datasets[3].data = displayP25;
+        fanChart.data.datasets[4].data = displayP5;
+        fanChart.update('none');
+        return;
+    }
+
+    const ctx = canvas.getContext('2d');
+    fanChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: displayLabels,
+            datasets: [
+                {
+                    label: 'P95 (Best)',
+                    data: displayP95,
+                    borderColor: 'rgba(63,185,80,0.6)',
+                    backgroundColor: 'transparent',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    tension: 0.3,
+                    borderDash: [4, 4]
+                },
+                {
+                    label: 'P75',
+                    data: displayP75,
+                    borderColor: 'rgba(63,185,80,0.4)',
+                    backgroundColor: 'rgba(63,185,80,0.08)',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    tension: 0.3,
+                    fill: '+1'
+                },
+                {
+                    label: 'Median',
+                    data: displayMedian,
+                    borderColor: '#3fb950',
+                    backgroundColor: 'transparent',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.3
+                },
+                {
+                    label: 'P25',
+                    data: displayP25,
+                    borderColor: 'rgba(248,81,73,0.4)',
+                    backgroundColor: 'rgba(248,81,73,0.08)',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    tension: 0.3,
+                    fill: '+1'
+                },
+                {
+                    label: 'P5 (Worst)',
+                    data: displayP5,
+                    borderColor: 'rgba(248,81,73,0.6)',
+                    backgroundColor: 'transparent',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    tension: 0.3,
+                    borderDash: [4, 4]
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: { boxWidth: 12, font: { size: 9 }, color: '#9ca3af' }
+                },
+                tooltip: {
+                    callbacks: {
+                        title: (items) => {
+                            const idx = items[0].dataIndex * step;
+                            return `After Trade ${idx + 1}`;
+                        },
+                        label: (ctx) => {
+                            const v = ctx.raw;
+                            return v != null ? `${ctx.dataset.label}: $${v.toFixed(0)}` : null;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    title: { display: false },
+                    ticks: { font: { size: 8 }, color: '#6b7280', maxRotation: 0 },
+                    grid: { color: '#1f2937' }
+                },
+                y: {
+                    title: { display: true, text: 'Equity ($)', font: { size: 10 }, color: '#9ca3af' },
+                    ticks: { font: { size: 9 }, color: '#9ca3af', callback: v => '$' + v.toFixed(0) },
+                    grid: { color: '#1f2937' }
+                }
+            }
+        }
+    });
 }
 
 function setStratMetric(metric) {

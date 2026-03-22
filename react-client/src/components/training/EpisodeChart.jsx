@@ -63,7 +63,7 @@ function extractMarkers(candles) {
 
 /**
  * Reusable CandlestickChart — renders one chart with candles + trade markers.
- * Candles come from ticksToCandles() grouped by second (OHLC).
+ * Candles come from ticksToCandles() grouped by tick count (OHLC).
  */
 const CandlestickChart = memo(function CandlestickChart({ title, subtitle, candles, height = 280 }) {
   const chartContainerRef = useRef(null);

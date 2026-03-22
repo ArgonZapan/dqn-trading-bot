@@ -3296,8 +3296,9 @@ async function trainingStep() {
     bufferHealth.recordSample({ state: flatState, action, reward }, loss !== null ? Math.abs(loss) : null);
     bufferHealth.updateBufferSize(agent.buffer?.length || 0, 10000);
 
-    // Track price and epsilon
-    currentEpisodeSteps.push({ step: metrics.steps, price: prices.btc, time: Date.now() });
+    // Track price and epsilon — use env price (training candles), not live ticker
+    const trainingPrice = env.currentPrice();
+    currentEpisodeSteps.push({ step: metrics.steps, price: trainingPrice, time: Date.now() });
     episodeEpsilons.push({ step: metrics.steps, epsilon: agent.epsilon });
 
     // New episode data for frontend bucketing
@@ -3306,7 +3307,7 @@ async function trainingStep() {
     currentEpSteps.push({
       step: metrics.steps,
       time: Date.now(),
-      price: prices.btc,
+      price: trainingPrice,
       action: epTrade || epAction,
       equity: currentBalance
     });

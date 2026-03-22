@@ -225,59 +225,103 @@ class TradingEnvironment {
         }
         
         // ─── Execute LONG ───
-        if (action === 1 && this.position === 0) {
-            // Dynamic position sizing based on ATR risk
-            let positionPct = this.riskPercent;
-            if (this.useDynamicSizing) {
-                const atrDistance = currentAtr * 2;
-                positionPct = Math.min(this.riskPercent / (atrDistance / price), this.maxPositionPct);
-                positionPct = Math.max(positionPct, 0.05);
+        if (action === 1) {
+            if (this.position === -1) {
+                // CLOSE SHORT when agent chooses BUY
+                const buybackCost = price * this.shortedBtc;
+                const fees = buybackCost * this.fee;
+                const pnl = (this.entryPrice - price) * this.shortedBtc - fees;
+                this.capital -= buybackCost + fees;
+                this.capital += pnl;
+                if (this.capital < 0) this.capital = 0;
+                this.trades.push({ 
+                    step: this.step, 
+                    action: 'BUY/COVER', 
+                    price, 
+                    pnl,
+                    fees,
+                    quantity: this.shortedBtc,
+                    exitType: 'signal',
+                    pnlPct: ((this.entryPrice - price) / this.entryPrice * 100).toFixed(2) + '%',
+                    type: 'exit'
+                });
+                this.shortedBtc = 0;
+                this.position = 0;
+                this.entryPrice = 0;
+            } else if (this.position === 0) {
+                // OPEN LONG when flat
+                let positionPct = this.riskPercent;
+                if (this.useDynamicSizing) {
+                    const atrDistance = currentAtr * 2;
+                    positionPct = Math.min(this.riskPercent / (atrDistance / price), this.maxPositionPct);
+                    positionPct = Math.max(positionPct, 0.05);
+                }
+                const tradeAmount = this.capital * Math.min(positionPct, this.maxPositionPct);
+                this.btc = tradeAmount / price;
+                this.capital -= tradeAmount;
+                this.position = 1;
+                this.entryPrice = price;
+                this.highestPrice = price;
+                this.stopLoss = price - (currentAtr * 2);
+                this.takeProfit = price + (currentAtr * 4);
+                this.trades.push({ 
+                    step: this.step, 
+                    action: 'BUY/LONG', 
+                    price, 
+                    positionPct: positionPct.toFixed(3),
+                    atr: currentAtr.toFixed(2),
+                    type: 'entry'
+                });
             }
-            
-            const tradeAmount = this.capital * Math.min(positionPct, this.maxPositionPct);
-            this.btc = tradeAmount / price;
-            this.capital -= tradeAmount;
-            this.position = 1;
-            this.entryPrice = price;
-            this.highestPrice = price;
-            this.stopLoss = price - (currentAtr * 2);
-            this.takeProfit = price + (currentAtr * 4);
-            this.trades.push({ 
-                step: this.step, 
-                action: 'BUY/LONG', 
-                price, 
-                positionPct: positionPct.toFixed(3),
-                atr: currentAtr.toFixed(2),
-                type: 'entry'
-            });
+            // If position === 1 (LONG), action 1 does nothing (already long)
         }
         // ─── Execute SHORT ───
-        else if (action === 2 && this.position === 0) {
-            // Dynamic position sizing for short
-            let positionPct = this.riskPercent;
-            if (this.useDynamicSizing) {
-                const atrDistance = currentAtr * 2;
-                positionPct = Math.min(this.riskPercent / (atrDistance / price), this.maxPositionPct);
-                positionPct = Math.max(positionPct, 0.05);
+        else if (action === 2) {
+            if (this.position === 1) {
+                // CLOSE LONG when agent chooses SELL
+                const fees = price * this.btc * this.fee;
+                const pnl = (price - this.entryPrice) * this.btc - fees;
+                this.capital += this.btc * price - fees;
+                this.trades.push({ 
+                    step: this.step, 
+                    action: 'SELL/CLOSE', 
+                    price, 
+                    pnl,
+                    fees,
+                    quantity: this.btc,
+                    exitType: 'signal',
+                    pnlPct: ((price - this.entryPrice) / this.entryPrice * 100).toFixed(2) + '%',
+                    type: 'exit'
+                });
+                this.btc = 0;
+                this.position = 0;
+                this.entryPrice = 0;
+            } else if (this.position === 0) {
+                // OPEN SHORT when flat
+                let positionPct = this.riskPercent;
+                if (this.useDynamicSizing) {
+                    const atrDistance = currentAtr * 2;
+                    positionPct = Math.min(this.riskPercent / (atrDistance / price), this.maxPositionPct);
+                    positionPct = Math.max(positionPct, 0.05);
+                }
+                const tradeAmount = this.capital * Math.min(positionPct, this.maxPositionPct);
+                this.shortedBtc = tradeAmount / price;
+                this.capital += tradeAmount - (tradeAmount * this.fee);
+                this.position = -1;
+                this.entryPrice = price;
+                this.lowestPrice = price;
+                this.stopLoss = price + (currentAtr * 2);
+                this.takeProfit = price - (currentAtr * 4);
+                this.trades.push({ 
+                    step: this.step, 
+                    action: 'SELL/SHORT', 
+                    price, 
+                    positionPct: positionPct.toFixed(3),
+                    atr: currentAtr.toFixed(2),
+                    type: 'entry'
+                });
             }
-            
-            // For short: borrow BTC, sell it, hope to buy back cheaper
-            const tradeAmount = this.capital * Math.min(positionPct, this.maxPositionPct);
-            this.shortedBtc = tradeAmount / price;  // Amount of BTC we're shorting
-            this.capital += tradeAmount - (tradeAmount * this.fee); // Received from selling BTC
-            this.position = -1;
-            this.entryPrice = price;
-            this.lowestPrice = price;
-            this.stopLoss = price + (currentAtr * 2);  // Price rises = loss for short
-            this.takeProfit = price - (currentAtr * 4);
-            this.trades.push({ 
-                step: this.step, 
-                action: 'SELL/SHORT', 
-                price, 
-                positionPct: positionPct.toFixed(3),
-                atr: currentAtr.toFixed(2),
-                type: 'entry'
-            });
+            // If position === -1 (SHORT), action 2 does nothing (already short)
         }
         // ─── CLOSE (any position) ───
         else if (action === 3) {

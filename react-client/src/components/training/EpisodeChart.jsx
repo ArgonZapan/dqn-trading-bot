@@ -1,4 +1,4 @@
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceDot } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
 import { endpoints } from '../../api/client';
 import { Card, LoadingSpinner } from '../common';
@@ -22,8 +22,8 @@ export function EpisodeChart() {
   // Build chart data from prices + trades
   const chartData = data.prices.map((p, i) => {
     // Find if any trade happened at this step
-    const buyTrade = data.trades?.find(t => t.step === p.step && t.side === 'LONG' && t.type === 'BUY');
-    const sellTrade = data.trades?.find(t => t.step === p.step && (t.side === 'LONG' && t.type === 'SELL' || t.side === 'CLOSE'));
+    const buyTrade = data.trades?.find(t => t.step === p.step && t.action === 'BUY');
+    const sellTrade = data.trades?.find(t => t.step === p.step && t.action === 'SELL');
     return {
       step: i,
       price: p.price,

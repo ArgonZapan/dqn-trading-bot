@@ -12,7 +12,7 @@ export function TradeTable() {
 
   if (isLoading) return <Card title="📖 Trade History"><LoadingSpinner /></Card>;
 
-  const trades = data?.trades || [];
+  const trades = data?.items || [];
 
   return (
     <Card title={`📖 Trade History (${trades.length})`}>
@@ -33,20 +33,20 @@ export function TradeTable() {
             </thead>
             <tbody>
               {trades.slice(-20).reverse().map((t, i) => (
-                <tr key={i}>
+                <tr key={t.id || i}>
                   <td>{trades.length - i}</td>
                   <td>
-                    <span className={`badge ${t.side === 'LONG' ? 'badge-green' : 'badge-red'}`}>
-                      {t.side}
+                    <span className={`badge ${t.direction === 'LONG' ? 'badge-green' : 'badge-red'}`}>
+                      {t.direction}
                     </span>
                   </td>
-                  <td>${t.entry?.toFixed(2)}</td>
-                  <td>${t.exit?.toFixed(2)}</td>
-                  <td className={t.pnl >= 0 ? 'green' : 'red'}>
-                    {t.pnl >= 0 ? '+' : ''}{t.pnl?.toFixed(2)}
+                  <td>${t.entryPrice?.toFixed(2)}</td>
+                  <td>${t.exitPrice?.toFixed(2)}</td>
+                  <td className={t.pnlAbsolute >= 0 ? 'green' : 'red'}>
+                    {t.pnlAbsolute >= 0 ? '+' : ''}{t.pnlAbsolute?.toFixed(2)}
                   </td>
                   <td className="text-muted">
-                    {t.timestamp ? new Date(t.timestamp).toLocaleTimeString() : '—'}
+                    {t.exitTime ? new Date(t.exitTime).toLocaleTimeString() : '—'}
                   </td>
                 </tr>
               ))}
@@ -65,7 +65,7 @@ export function EquityCurveChart() {
     refetchInterval: 10000,
   });
 
-  const chartData = data?.equity?.map((v, i) => ({ step: i, equity: v })) || [];
+  const chartData = data?.map((v, i) => ({ step: i, equity: v.equity })) || [];
 
   if (chartData.length < 2) {
     return (

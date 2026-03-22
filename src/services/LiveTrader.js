@@ -238,8 +238,34 @@ class LiveTrader {
 
   // ─── Auto-trading: evaluate signal and open positions ────────────────────
 
+  /**
+   * Close existing position before flipping direction
+   * Returns the closed trade if a position was closed, null otherwise
+   */
+  async closeExistingPositionBeforeFlip(targetSide) {
+    const hasLong = this.positions.has('LONG');
+    const hasShort = this.positions.has('SHORT');
+    if (!hasLong && !hasShort) return null;
+
+    // If we already have the target side, do nothing
+    if ((targetSide === 'BUY' && hasLong) || (targetSide === 'SHORT' && hasShort)) return null;
+
+    // Close the opposite position before flipping
+    if (targetSide === 'BUY' && hasShort) {
+      const price = await this.getCurrentPrice(this.symbol);
+      console.log(`[LiveTrader] Flipping SHORT→LONG @ $${price.toLocaleString()}`);
+      return await this.closeShort('FLIP');
+    }
+    if (targetSide === 'SHORT' && hasLong) {
+      const price = await this.getCurrentPrice(this.symbol);
+      console.log(`[LiveTrader] Flipping LONG→SHORT @ $${price.toLocaleString()}`);
+      return await this.closeLong('FLIP');
+    }
+    return null;
+  }
+
   async autoTradingStep(strategy) {
-    if (!this.enabled || this.positions.size > 0) return null;
+    if (!this.enabled) return null;
     if (this.strategy === 'grid') return null;
     const check = this.checkAllowance();
     if (!check.allowed) {
@@ -259,7 +285,14 @@ class LiveTrader {
     const signal = filterSignalWithHTF(rawSignal, this.strategy, this.htfState, ind);
     if (signal === 'HOLD') return null;
 
-    // Open position
+    // Close existing position if flipping direction
+    if (signal === 'BUY' || signal === 'SHORT') {
+      await this.closeExistingPositionBeforeFlip(signal);
+    }
+
+    // Open position only if no position exists after flip check
+    if (this.positions.size > 0) return null;
+
     if (signal === 'BUY') {
       const pos = await this.openLong();
       if (pos) console.log(`[LiveTrader] HTF-filtered BUY signal → LONG opened @ $${pos.entryPrice.toLocaleString()} (H4: ${this.htfState.h4.trend})`);
@@ -401,7 +434,7 @@ class LiveTrader {
         fee,
         timestamp: Date.now()
       };
-      this.closedTrades.push(trade);
+      // Entry leg: stored separately, not in closedTrades yet
       this.capital -= quantity * price + fee;
       return trade;
     } catch (e) { console.error('Market buy error:', e.message); return null; }
@@ -499,9 +532,27 @@ class LiveTrader {
     const trade = await this.marketSell(pos.quantity);
     if (!trade) return null;
 
-    trade.pnl = (this.currentPrice - pos.entryPrice) * pos.quantity;
+    const pnl = (this.currentPrice - pos.entryPrice) * pos.quantity - trade.fee;
+    const exitTrade = {
+      id: `live_${Date.now()}_close_long`,
+      orderId: 0,
+      side: 'CLOSE_LONG',
+      symbol: this.symbol,
+      entryPrice: pos.entryPrice,
+      exitPrice: this.currentPrice,
+      quantity: pos.quantity,
+      fee: trade.fee,
+      pnl,
+      exitReason: reason,
+      exitTime: Date.now(),
+      timestamp: Date.now()
+    };
+    this.closedTrades.push(exitTrade);
+    this.dailyTradeCount++;
+    this.dailyPnL += pnl;
+    this.updatePeak();
     this.positions.delete('LONG');
-    return trade;
+    return exitTrade;
   }
 
   async openShort(quantity) {
@@ -551,9 +602,27 @@ class LiveTrader {
     const trade = await this.marketBuy(pos.quantity);
     if (!trade) return null;
 
-    trade.pnl = (pos.entryPrice - this.currentPrice) * pos.quantity;
+    const pnl = (pos.entryPrice - this.currentPrice) * pos.quantity - trade.fee;
+    const exitTrade = {
+      id: `live_${Date.now()}_close_short`,
+      orderId: 0,
+      side: 'CLOSE_SHORT',
+      symbol: this.symbol,
+      entryPrice: pos.entryPrice,
+      exitPrice: this.currentPrice,
+      quantity: pos.quantity,
+      fee: trade.fee,
+      pnl,
+      exitReason: reason,
+      exitTime: Date.now(),
+      timestamp: Date.now()
+    };
+    this.closedTrades.push(exitTrade);
+    this.dailyTradeCount++;
+    this.dailyPnL += pnl;
+    this.updatePeak();
     this.positions.delete('SHORT');
-    return trade;
+    return exitTrade;
   }
 
   async placeStopLoss(side, quantity, price) {
@@ -621,7 +690,7 @@ class LiveTrader {
       orderId: 0, side: 'BUY', symbol: this.symbol,
       price, quantity, fee, timestamp: Date.now()
     };
-    this.closedTrades.push(trade);
+    // Entry leg: stored separately, not in closedTrades yet
     this.capital -= quantity * price + fee;
     return trade;
   }
@@ -633,7 +702,7 @@ class LiveTrader {
       orderId: 0, side: 'SELL', symbol: this.symbol,
       price, quantity, fee, timestamp: Date.now()
     };
-    this.closedTrades.push(trade);
+    // Entry leg: stored separately, not in closedTrades yet
     this.capital += quantity * price - fee;
     return trade;
   }
@@ -660,6 +729,20 @@ class LiveTrader {
 
   updateUnrealizedPnL() {
     // Update position markers for price movement
+  }
+
+  updatePeak() {
+    const equity = this.getTotalEquity();
+    if (equity > this.peakBalance) {
+      this.peakBalance = equity;
+    }
+    const drawdown = this.peakBalance - equity;
+    if (drawdown > this.maxDrawdown) {
+      this.maxDrawdown = drawdown;
+    }
+    if (this.peakBalance > 0) {
+      this.maxDrawdownPercent = (drawdown / this.peakBalance) * 100;
+    }
   }
 
   getUnrealizedPnL() {

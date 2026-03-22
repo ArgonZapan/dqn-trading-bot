@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { createChart } from 'lightweight-charts';
+import { createChart, CandlestickSeries, createSeriesMarkers } from 'lightweight-charts';
 import { useQuery } from '@tanstack/react-query';
 import { endpoints } from '../../api/client';
 import { Card, LoadingSpinner } from '../common';
@@ -50,8 +50,8 @@ export function EpisodeChart() {
       },
     });
 
-    // Candlestick series
-    const candlestickSeries = chart.addCandlestickSeries({
+    // Candlestick series (lightweight-charts v5 API)
+    const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#4ade80',
       downColor: '#f87171',
       borderDownColor: '#f87171',
@@ -107,7 +107,7 @@ export function EpisodeChart() {
         .sort((a, b) => a.time - b.time);
 
       if (markers.length > 0) {
-        candlestickSeries.setMarkers(markers);
+        createSeriesMarkers(candlestickSeries, markers);
       }
     }
 

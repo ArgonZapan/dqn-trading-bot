@@ -82,7 +82,7 @@ class DQNAgent {
 
     /**
      * Flatten state object to array for TensorFlow
-     * Produces exactly stateSize (300) elements via padding if needed
+     * Produces exactly stateSize (394) elements via padding if needed
      */
     flattenState(state) {
         if (Array.isArray(state)) return state;
@@ -269,12 +269,13 @@ class DQNAgent {
                 loss = lossResult;
             } else if (lossResult && typeof lossResult.arraySync === 'function') {
                 loss = lossResult.arraySync();
-                if (typeof loss.dispose === 'function') lossResult.dispose();
+                if (typeof lossResult.dispose === 'function') lossResult.dispose();
             } else if (Array.isArray(lossResult)) {
                 loss = lossResult[0];
             } else if (lossResult && typeof lossResult.then === 'function') {
                 const resolved = await lossResult;
                 loss = typeof resolved === 'number' ? resolved : 0;
+                if (resolved && typeof resolved.dispose === 'function') resolved.dispose();
             } else {
                 loss = 0;
             }

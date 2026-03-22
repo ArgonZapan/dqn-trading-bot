@@ -293,6 +293,7 @@ class TradingEnvironment {
                     price, 
                     pnl,
                     fees,
+                    quantity: this.btc,
                     exitType: stopTriggered ? 'stop_loss' : 'signal',
                     pnlPct: ((price - this.entryPrice) / this.entryPrice * 100).toFixed(2) + '%',
                     type: 'exit'
@@ -314,6 +315,7 @@ class TradingEnvironment {
                     price, 
                     pnl,
                     fees,
+                    quantity: this.shortedBtc,
                     exitType: stopTriggered ? 'stop_loss' : 'signal',
                     pnlPct: ((this.entryPrice - price) / this.entryPrice * 100).toFixed(2) + '%',
                     type: 'exit'

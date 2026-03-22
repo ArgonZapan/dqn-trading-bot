@@ -2657,17 +2657,13 @@ const server = http.createServer(async (req, res) => {
             episodeStartBalance = env.balance();
             trainingActive = true;
             trainingStartTime = Date.now();
-            
-            // Load candles into environment
-            const klines = await fetchCandles('BTCUSDT', '1m', 200);
-            if (klines.length >= 50) {
-                env.reset(klines);
-            }
-            
+
             agent.startEpisode();
             episodeTrades = [];
             currentEpisodeSteps = [];
             episodeEpsilons = [];
+            episodeEquity = [];
+            metrics.steps = 0; // Reset step counter for new training session
             console.log('▶ Training started');
             // Training start alert
             const a = getAlerter();
@@ -3211,35 +3207,36 @@ const server = http.createServer(async (req, res) => {
 // Training step
 async function trainingStep() {
     if (!trainingActive) return;
-    
-    // Refresh candles every 60 steps
-    if (metrics.steps > 0 && metrics.steps % 60 === 0) {
-        const fresh = await fetchCandles('BTCUSDT', '1m', 200);
-        if (fresh.length >= 50) {
-            env.reset(fresh);
-        }
-    }
-    
+
+    const episodeAtStart = agent.episode;
+
     const state = env.getState();
     const action = agent.act(state);
-    
+
     // Execute action in environment
     const { reward, done } = env.execute(action);
     const newState = env.getState();
-    
-    // Check for trade execution (BUY or SELL)
+
+    // Check for trade execution — env trades have string actions like 'BUY/LONG', 'SELL/CLOSE', etc.
     const tradesAfter = env.trades;
     if (tradesAfter.length > episodeTrades.length) {
         const newTrade = tradesAfter[tradesAfter.length - 1];
+        // Map env action strings to simple labels for episode tracking
+        let tradeAction = 'UNKNOWN';
+        const actionStr = newTrade.action || '';
+        if (actionStr.includes('BUY') && actionStr.includes('LONG')) tradeAction = 'BUY';
+        else if (actionStr.includes('SELL') && actionStr.includes('CLOSE')) tradeAction = 'SELL';
+        else if (actionStr.includes('SELL') && actionStr.includes('SHORT')) tradeAction = 'SHORT';
+        else if (actionStr.includes('BUY') && actionStr.includes('COVER')) tradeAction = 'COVER';
         episodeTrades.push({
             step: metrics.steps,
-            action: newTrade.action === 1 ? 'BUY' : 'SELL',
+            action: tradeAction,
             price: newTrade.price,
             pnl: newTrade.pnl || 0,
-            quantity: newTrade.quantity
+            quantity: newTrade.quantity || (newTrade.pnl !== undefined ? Math.abs(newTrade.pnl / (newTrade.price * 0.001 || 1)) : 0)
         });
     }
-    
+
     // Calculate equity (total portfolio value including BTC holdings)
     const currentBalance = env.balance();
     episodeEquity.push({
@@ -3247,7 +3244,7 @@ async function trainingStep() {
         equity: currentBalance,
         drawdown: ((episodeStartBalance - currentBalance) / episodeStartBalance) * 100
     });
-    
+
     // Store experience
     agent.remember(state, action, reward, newState, done);
 
@@ -3259,13 +3256,16 @@ async function trainingStep() {
     const flatState = agent.flattenState ? agent.flattenState(state) : state;
     bufferHealth.recordSample({ state: flatState, action, reward }, loss !== null ? Math.abs(loss) : null);
     bufferHealth.updateBufferSize(agent.buffer?.length || 0, 10000);
-    
+
     // Track price and epsilon
     currentEpisodeSteps.push({ step: metrics.steps, price: prices.btc, time: Date.now() });
     episodeEpsilons.push({ step: metrics.steps, epsilon: agent.epsilon });
-    
-    // Episode end — detect by episode increment (episode changes when env.reset + startEpisode called)
-    if (episodeAtStart < agent.episode) {
+
+    metrics.bufferSize = agent.buffer.length;
+    metrics.steps++;
+
+    // Episode end — detect by episode increment or done signal
+    if (done || episodeAtStart < agent.episode) {
         // episodeAtStart is the episode that just finished
         const completedEpisode = episodeAtStart;
 
@@ -3380,9 +3380,6 @@ async function trainingStep() {
 
         await saveModel();
     }
-    
-    metrics.bufferSize = agent.buffer.length;
-    metrics.steps++;
 }
 
 // Update prices
@@ -3426,7 +3423,7 @@ async function updateHtfTrends() {
 
 // Routes
 setInterval(updatePrices, 3000);
-setInterval(trainingStep, 1000);
+setInterval(trainingStep, 100);
 setInterval(paperTradingStep, 5000); // Paper trading check every 5s
 setInterval(paperRebalancingStep, 10000); // Multi-asset rebalancing every 10s
 setInterval(updateHtfTrends, HTF_UPDATE_INTERVAL);

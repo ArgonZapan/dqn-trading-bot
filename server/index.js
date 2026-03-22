@@ -3226,17 +3226,20 @@ async function trainingStep() {
     episodeEpsilons.push({ step: metrics.steps, epsilon: agent.epsilon });
 
     // Each tick = 1 OHLC candle (open=high=low=close=price)
-    const tickAction = action === 0 ? 'HOLD' : action === 1 ? 'BUY' : 'SELL';
-    // Check if a trade was just executed (override HOLD with actual trade action)
-    const epTrade = tradesAfter.length > episodeTrades.length ? episodeTrades[episodeTrades.length - 1]?.action : null;
-    currentEpData.push({
-      time: Math.floor(Date.now() / 1000),
-      open: trainingPrice,
-      high: trainingPrice,
-      low: trainingPrice,
-      close: trainingPrice,
-      action: epTrade || tickAction
-    });
+    // Guard: env.currentPrice() returns 0 when step is past last candle (after execute increments it)
+    if (trainingPrice > 0) {
+      const tickAction = action === 0 ? 'HOLD' : action === 1 ? 'BUY' : 'SELL';
+      // Check if a trade was just executed (override HOLD with actual trade action)
+      const epTrade = tradesAfter.length > episodeTrades.length ? episodeTrades[episodeTrades.length - 1]?.action : null;
+      currentEpData.push({
+        time: Math.floor(Date.now() / 1000),
+        open: trainingPrice,
+        high: trainingPrice,
+        low: trainingPrice,
+        close: trainingPrice,
+        action: epTrade || tickAction
+      });
+    }
 
     metrics.bufferSize = agent.buffer.length;
     metrics.steps++;
@@ -3314,8 +3317,10 @@ async function trainingStep() {
         bufferHealth.recordEpisode(pnlPercent, metrics.steps);
         bufferHealth.resetActionCounts();
         
-        // New: copy raw candles to prevEpData, reset currentEpData
-        prevEpData = [...currentEpData];
+        // Copy raw candles to prevEpData (only if we have meaningful data)
+        if (currentEpData.length >= 3) {
+          prevEpData = [...currentEpData];
+        }
         currentEpData = [];
 
         // Reset episode tracking state BEFORE starting new episode
@@ -3323,7 +3328,6 @@ async function trainingStep() {
         currentEpisodeSteps = [];
         episodeEpsilons = [];
         episodeEquity = [];
-        currentEpData = [];
 
         // Fetch fresh candles for new episode
         const newCandles = await fetchCandles('BTCUSDT', '1m', 200);

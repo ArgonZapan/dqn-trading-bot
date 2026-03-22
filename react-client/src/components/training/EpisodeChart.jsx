@@ -79,7 +79,7 @@ const CandlestickChart = memo(function CandlestickChart({ title, subtitle, candl
       timeScale: {
         borderColor: '#30363d',
         timeVisible: true,
-        secondsVisible: false,
+        secondsVisible: true,
       },
     });
 

@@ -260,7 +260,8 @@ class DQNAgent {
             tf.tensor2d(flatStates, [flatStates.length, flatStates[0].length]),
             tf.tensor2d(targetQs)
         );
-        const loss = lossTensor.dataSync()[0];
+        const lossData = await lossTensor.data();
+        const loss = lossData[0];
         lossTensor.dispose();
         
         // Update epsilon

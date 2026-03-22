@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import Layout from './components/layout/Layout';
 import TrainingPage from './pages/TrainingPage';
 import BacktestPage from './pages/BacktestPage';
@@ -20,17 +21,19 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<TrainingPage />} />
-            <Route path="/backtest" element={<BacktestPage />} />
-            <Route path="/paper" element={<PaperTradingPage />} />
-            <Route path="/analytics" element={<AnalyticsPage />} />
-            <Route path="/live" element={<LiveTradingPage />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<TrainingPage />} />
+              <Route path="/backtest" element={<BacktestPage />} />
+              <Route path="/paper" element={<PaperTradingPage />} />
+              <Route path="/analytics" element={<AnalyticsPage />} />
+              <Route path="/live" element={<LiveTradingPage />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </ErrorBoundary>
     </QueryClientProvider>
   );
 }

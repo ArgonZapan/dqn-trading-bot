@@ -256,13 +256,29 @@ class DQNAgent {
         const targetQs = currentQsData;
         
         // Train
-        const lossTensor = this.onlineModel.trainOnBatch(
+        const lossResult = this.onlineModel.trainOnBatch(
             tf.tensor2d(flatStates, [flatStates.length, flatStates[0].length]),
             tf.tensor2d(targetQs)
         );
-        const lossData = await lossTensor.data();
-        const loss = lossData[0];
-        lossTensor.dispose();
+        // Handle: TF.js may return Tensor, number, or Promise
+        let loss;
+        try {
+            if (typeof lossResult === 'number') {
+                loss = lossResult;
+            } else if (lossResult && typeof lossResult.arraySync === 'function') {
+                loss = lossResult.arraySync();
+                if (typeof loss.dispose === 'function') lossResult.dispose();
+            } else if (Array.isArray(lossResult)) {
+                loss = lossResult[0];
+            } else if (lossResult && typeof lossResult.then === 'function') {
+                const resolved = await lossResult;
+                loss = typeof resolved === 'number' ? resolved : 0;
+            } else {
+                loss = 0;
+            }
+        } catch (e) {
+            loss = 0;
+        }
         
         // Update epsilon
         this.epsilon = Math.max(this.epsilonMin, this.epsilon * this.epsilonDecay);

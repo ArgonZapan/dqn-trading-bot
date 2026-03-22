@@ -16,7 +16,10 @@ export function useStatus() {
       setTraining(data.trainingActive);
       return data;
     },
-    refetchInterval: 5000,
+    refetchInterval: (query) => {
+      // Szybciej podczas treningu
+      return query.state.data?.trainingActive ? 2000 : 5000;
+    },
   });
 }
 

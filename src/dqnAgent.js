@@ -270,6 +270,7 @@ class DQNAgent {
         }
         
         this.steps++;
+        this.lastLoss = loss;
         return loss;
     }
 
@@ -293,7 +294,8 @@ class DQNAgent {
             episode: this.episode,
             steps: this.steps,
             bufferSize: this.buffer.length,
-            totalParams: this.onlineModel.countParams()
+            totalParams: this.onlineModel.countParams(),
+            loss: typeof this.lastLoss !== 'undefined' ? this.lastLoss : null,
         };
     }
 

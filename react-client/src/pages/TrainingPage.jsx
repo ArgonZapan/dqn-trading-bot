@@ -1,5 +1,6 @@
 import { Card, MetricsGrid, Button } from '../components/common';
 import { useStatus, useStartTraining, useStopTraining, useSaveModel } from '../hooks/useApi';
+import { useTrainingTimer } from '../hooks/useTrainingTimer';
 
 export default function TrainingPage() {
   const { data: status } = useStatus();
@@ -8,6 +9,8 @@ export default function TrainingPage() {
   const saveModel = useSaveModel();
 
   const training = status?.trainingActive;
+  const timer = useTrainingTimer(training);
+  const metrics = status?.metrics || {};
 
   return (
     <div className="page-grid">
@@ -35,22 +38,22 @@ export default function TrainingPage() {
       {/* Agent */}
       <Card title="🧠 Agent">
         <MetricsGrid items={[
-          { label: 'Epsilon', value: status?.metrics?.epsilon?.toFixed(3) || '—', color: 'blue' },
-          { label: 'Episode', value: status?.metrics?.episode || 0 },
-          { label: 'Buffer', value: status?.metrics?.bufferSize || 0 },
-          { label: 'Loss', value: status?.metrics?.loss?.toFixed(4) || '—' },
+          { label: 'Epsilon', value: metrics.epsilon?.toFixed(3) || '—', color: 'blue' },
+          { label: 'Episode', value: metrics.episode || 0 },
+          { label: 'Buffer', value: metrics.bufferSize || 0 },
+          { label: 'Loss', value: metrics.loss?.toFixed(5) || '—' },
         ]} />
         <div className="bar-container">
           <div
             className="bar green"
-            style={{ width: `${(status?.metrics?.epsilon || 0) * 100}%` }}
+            style={{ width: `${(metrics.epsilon || 0) * 100}%` }}
           />
         </div>
       </Card>
 
-      {/* Timer placeholder */}
+      {/* Timer */}
       <Card title="⏱️ Training Timer">
-        <div className="timer-display">00:00:00</div>
+        <div className="timer-display">{timer.format()}</div>
         <div className="timer-label">{training ? 'Running' : 'Idle'}</div>
       </Card>
 

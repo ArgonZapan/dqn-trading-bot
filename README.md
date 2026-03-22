@@ -4,62 +4,58 @@
 
 ![Node](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=nodedotjs)
 ![TensorFlow.js](https://img.shields.io/badge/TensorFlow.js-4.x-FF6F00?style=flat-square&logo=tensorflow)
+![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
-![Binance](https://img.shields.io/badge/Binance-Spot-F0B90B?style=flat-square&logo=binance)
 
 ---
 
 ## 🏗️ Architektura
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      DQN TRADING BOT                        │
-│                     (Binance Spot BTC/USDT)                 │
-├──────────────┬──────────────┬───────────────┬───────────────┤
-│   CLIENT     │   SERVER     │    AGENT      │   SERVICES    │
-│  Dashboard   │  Raw Node.js│  Double DQN   │  Binance WS   │
-│  Vanilla JS  │  http.Server│  + PER +      │  Real-time    │
-│  + Chart.js │  REST API   │  Dueling      │  klines       │
-│              │  port 3000   │               │               │
-│  📊 Charts   │  /api/*     │  ↕ TensorFlow │  📈 Indicators │
-│  📈 Metrics  │              │    .js        │  RSI/MACD/BB  │
-│  💰 Portfolio │              │               │  EMA(9,21,50) │
-│  🎮 Controls │              │  ReplayBuffer │               │
-└──────────────┴──────────────┴───────────────┴───────────────┘
-                            │
-                    ┌───────┴───────┐
-                    │  ENVIRONMENT  │
-                    │  BUY/SELL/    │
-                    │  HOLD actions │
-                    │  Reward = P&L │
-                    │  - fees       │
-                    └───────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                        DQN TRADING BOT                             │
+│                      (Binance Spot BTC/USDT)                       │
+├────────────────┬────────────────┬──────────────────┬───────────────┤
+│    CLIENT      │    SERVER      │      AGENT       │   SERVICES    │
+│  React + Vite  │  Raw Node.js   │   Double DQN     │  Binance WS   │
+│  React Router  │  http.Server   │   + PER +        │  Real-time    │
+│  React Query   │  REST API      │   Dueling        │  klines       │
+│  Zustand       │  port 3000     │                  │               │
+│  Recharts      │  /api/*        │  ↕ TensorFlow.js │  📈 Indicators │
+│                │                │                  │  RSI/MACD/BB  │
+│  📊 Dashboard  │  🎮 Controls   │  🧠 ReplayBuffer │  EMA(9,21,50) │
+└────────────────┴────────────────┴──────────────────┴───────────────┘
+                                │
+                        ┌───────┴───────┐
+                        │  ENVIRONMENT  │
+                        │  BUY/SELL/    │
+                        │  HOLD actions │
+                        │  Reward = P&L │
+                        │  - fees       │
+                        └───────────────┘
 ```
-
-> **Uwaga:** Serwer to raw `http.Server` (Node.js), NIE Express. Klient używa Vanilla JS + Chart.js (starsza wersja). Nowy frontend React jest w `react-client/`.
 
 ---
 
 ## 🚀 Szybki start
 
 ```bash
-# 1. Zainstaluj zależności
+# 1. Zainstaluj zależności (backend)
 npm install
 
-# 2. Skonfiguruj klucze Binance (opcjonalne dla backtestu)
+# 2. Skonfiguruj klucze Binance (opcjonalne)
 cp .env.example .env
-# Edytuj .env i dodaj klucze API z uprawnieniami do handlu spot
+# Edytuj .env i dodaj BINANCE_API_KEY + BINANCE_SECRET
 
-# 3. Uruchom serwer (LAN)
-npm start
-# lub: node server/index.js
-# Dashboard: http://<IP_SERWERA>:3000
+# 3. Uruchom backend
+node server/index.js
+# Dashboard legacy: http://<IP>:3000
 
-# 4. Trenuj agenta (przez dashboard)
-Dashboard → sekcja Kontrola → TRAIN
-
-# 5. Backtest
-npm run backtest
+# 4. Uruchom frontend React
+cd react-client
+npm install
+npm run dev
+# React dashboard: http://<IP>:5173
 ```
 
 ---
@@ -69,141 +65,137 @@ npm run backtest
 ```
 dqn-trading-bot/
 ├── server/
-│   └── index.js              # Raw http.Server API (port 3000)
+│   └── index.js                # Raw http.Server API (port 3000)
 ├── client/
-│   └── index.html            # Dashboard HTML (Vanilla JS + Chart.js)
-├── react-client/             # 🆕 Nowy frontend React (w trakcie rozwoju)
+│   └── index.html              # Legacy dashboard (Vanilla JS + Chart.js)
+├── react-client/               # Nowy frontend React
 │   ├── src/
-│   │   ├── pages/            # TrainingPage, BacktestPage, LiveTrading...
-│   │   ├── components/       # Layout, Nav, common components
-│   │   ├── hooks/            # useApi (React Query hooks)
-│   │   ├── store/            # Zustand state management
-│   │   └── api/              # API client
-│   └── vite.config.js
+│   │   ├── pages/              # Training, Backtest, Paper, Analytics, Live
+│   │   ├── components/
+│   │   │   ├── layout/         # Layout, Sidebar, BottomNav
+│   │   │   ├── common/         # Card, Button, MetricsGrid, ErrorBoundary
+│   │   │   ├── training/       # EpisodeChart, EpisodeHistory
+│   │   │   ├── paper/          # TradeTable, EquityCurveChart
+│   │   │   ├── backtest/       # (w budowie)
+│   │   │   └── analytics/      # (w budowie)
+│   │   ├── hooks/              # useApi (React Query), useTrainingTimer
+│   │   ├── store/              # Zustand (prices, training, paper state)
+│   │   └── api/                # client.js (wszystkie endpointy)
+│   ├── vite.config.js          # Proxy /api → localhost:3000
+│   └── playwright.config.js    # E2E test config
 ├── src/
-│   ├── agents/
-│   │   └── DQNAgent.ts       # Double DQN + PER + Dueling Networks
-│   ├── environments/
-│   │   └── TradingEnvironment.ts  # RL environment (state/action/reward)
-│   ├── models/
-│   │   └── DQNModel.ts        # Neural network (TF.js)
-│   ├── services/
-│   │   ├── BinanceClient.ts  # Binance REST + WebSocket
-│   │   ├── LiveTrader.js     # Live trading executor
-│   │   └── PaperTrader.ts     # Paper trading engine
-│   ├── utils/
-│   │   ├── ReplayBuffer.ts    # Prioritized Experience Replay
-│   │   └── MetricsCalculator.ts  # Sharpe, MaxDD, WinRate, PF
-│   ├── indicators.js          # RSI, MACD, EMA, Bollinger Bands
-│   ├── environment.js         # TradingEnvironment (legacy JS)
-│   ├── dqnAgent.js            # DQNAgent (legacy JS)
-│   ├── replayBuffer.js        # ReplayBuffer (legacy JS)
-│   ├── metrics.js             # MetricsCalculator (legacy JS)
-│   ├── portfolio.js           # Portfolio state
-│   ├── risk.js                # Risk manager (stop-loss, position sizing)
-│   ├── notifier.js            # Telegram notifications
-│   ├── strategies.js          # Trading strategies
+│   ├── dqnAgent.js             # DQN Agent (Double DQN + PER + Dueling)
+│   ├── environment.js          # Trading Environment (state/action/reward)
+│   ├── replayBuffer.js         # Prioritized Experience Replay
+│   ├── indicators.js           # RSI, MACD, EMA, Bollinger Bands
+│   ├── strategies.js           # Trend, MeanRev, Momentum, MACD, Scalping
 │   ├── strategies/
-│   │   ├── scalpingStrategy.ts
-│   │   ├── gridStrategy.ts
-│   │   └── ...
-│   └── logger.js              # Structured logging
-├── scripts/
-│   ├── train.js               # Training script
-│   └── backtest.ts            # Backtest z pełnymi metrykami
-├── tests/                     # Testy jednostkowe (Mocha)
-├── models/                    # Zapisane modele DQN (dqn-ep{N}.json)
-├── dist/                      # Skompilowane pliki TS (nie używane)
-├── trade-journal.json         #Dziennik transakcji
-├── .env.example               # Przykładowa konfiguracja
-├── docker-compose.yml         # Docker deployment
+│   │   ├── scalpingStrategy.js
+│   │   ├── gridStrategy.js
+│   │   └── index.js
+│   ├── metrics.js              # Sharpe, MaxDD, WinRate, ProfitFactor
+│   ├── portfolio.js            # Portfolio state management
+│   ├── risk.js                 # Risk manager (SL, position sizing)
+│   ├── notifier.js             # Telegram notifications
+│   └── logger.js               # Structured logging
+├── tests/
+│   └── dashboard.spec.js       # Playwright E2E tests (35 test cases)
+├── bugs/                       # Raporty bugów (tester: Jarvis Horner)
+│   ├── TEMPLATE.md             # Szablon raportu
+│   ├── SEVERITY.md             # Definicje severity
+│   ├── CHECKLIST.md            # Checklista testów
+│   └── reports/                # Raporty per aplikacja
+├── models/                     # Zapisane modele DQN (dqn-ep{N}.json)
+├── .env.example                # Przykładowa konfiguracja
+├── docker-compose.yml
 ├── Dockerfile
+├── playwright.config.js        # Playwright E2E config
 └── README.md
 ```
+
+---
+
+## 📊 Dashboard (React)
+
+Zakładki:
+
+| Zakładka | Zawartość |
+|----------|-----------|
+| **Training** | Kontrola (TRAIN/STOP/SAVE) + Agent Metrics + Timer + Wykres epizodu + Historia + Logi |
+| **Backtest** | HTF Trend Filter + Portfolio + Risk/Reward + Trading Chart + Sentiment + Strategy Compare |
+| **Paper** | Paper Trading Controls + Strategie + SL/TP + Equity Curve + Trade History |
+| **Analytics** | Performance Summary + Monte Carlo + P&L Attribution + Heatmap + Rebalancer + Optimizer |
+| **Live** | Live Trading (Binance) + Alert Configuration |
+
+### Stack
+
+- **Vite** — szybki dev server + build
+- **React 18** + **React Router v6** — SPA z nawigacją
+- **React Query** — cache API, auto-refetch, loading/error states
+- **Zustand** — global state (ceny, training status, paper trading)
+- **Recharts** — wykresy (equity, epizody, porównanie strategii)
+- **CSS** — dark theme, responsywny (sidebar desktop, bottom-nav mobile)
 
 ---
 
 ## 🧠 Specyfikacja DQN
 
 ### State Space
-Wektor wejściowy sieci neuronowej (~60 świec × ilość_cech):
 
-| Cecha | Opis |
-|-------|------|
-| OHLCV | Ceny OHLCV znormalizowane (min-max) |
-| RSI(14) | Relative Strength Index |
-| MACD(12,26,9) | MACD line, signal, histogram |
-| EMA(9,21,50) | Exponential Moving Averages |
-| Bollinger Bands(20,2) | Upper, middle, lower band |
-| Wolumen | Wolumen znormalizowany |
-| Pozycja | 0 = flat, 1 = long |
-| Unrealized P&L | Niezrealizowany zysk/strata |
-| Czas od last trade | Ile świec minęło od ostatniej transakcji |
+Wejście sieci neuronowej (~394 cechy):
+
+| Grupa | Cechy | Opis |
+|-------|-------|------|
+| OHLCV | 60×5 | Ceny znormalizowane (open, high, low, close, volume) |
+| Volume | 60 | Wolumen znormalizowany |
+| Position | 3 | One-hot: [flat, long, short] |
+| P&L | 3 | Realized, unrealized, total |
+| Timing/Vol | 6 | Time since trade, avg volume ratio, volatility |
+| Returns | 4 | 1m, 5m, 15m, 1h returns |
+| Sentiment | 1 | Market sentiment score |
+| ML Features | 17 | RSI, MACD, EMA, Bollinger, ATR |
 
 ### Action Space
+
 ```
 0 = HOLD  — nie rób nic
-1 = BUY   — kup BTC za USDT (position_size % kapitału)
+1 = BUY   — kup BTC za USDT (95% kapitału)
 2 = SELL  — sprzedaj BTC za USDT
 ```
 
 ### Reward Function
+
 ```
-reward = realized_pnl
-        - trading_fees (0.1% Binance)
-        - spread_cost
-        + hold_bonus (jeśli pozycja zyskowna)
-        - drawdown_penalty
+reward = realized_pnl - trading_fees(0.1%) - spread_cost
+        + hold_bonus(if profitable) - drawdown_penalty
 ```
 
-### Architektura sieci (TensorFlow.js)
+### Sieć neuronowa (TensorFlow.js)
+
 ```
-Input (state_size)
-  ↓
-Dense(256, ReLU) + BatchNorm + Dropout(0.2)
-  ↓
-Dense(256, ReLU) + BatchNorm + Dropout(0.2)
-  ↓
-Dense(128, ReLU)
-  ↓
-Value stream → Dense(1)        [wartość stanu]
-Advantage stream → Dense(3)    [wartość akcji]
-  ↓
-Q(s,a) = Value + (Advantage - mean(Advantage))
-  ↓
-Output: Q-values dla [HOLD, BUY, SELL]
+Input (394)
+  → Dense(256, ReLU) + BatchNorm + Dropout(0.2)
+  → Dense(128, ReLU) + BatchNorm + Dropout(0.2)
+  → Dense(64, ReLU)
+  → Value stream → Dense(1)
+  → Advantage stream → Dense(3)
+  → Q(s,a) = Value + (Advantage - mean(Advantage))
+  → Output: Q-values [HOLD, BUY, SELL]
 ```
-
----
-
-## 📊 Metryki portfolio
-
-Obliczane przez `MetricsCalculator.ts`:
-
-| Metryka | Opis |
-|---------|------|
-| **Sharpe Ratio** | Risk-adjusted return (annualized) |
-| **Max Drawdown** | Największy spadek od peak |
-| **Win Rate** | % zyskownych transakcji |
-| **Profit Factor** | Gross profit / Gross loss |
-| **P&L %** | Całkowity zysk/strata % |
-| **Avg Win/Loss** | Średni zysk i średnia strata |
 
 ---
 
 ## 🔧 Konfiguracja
 
-Zmienne środowiskowe (`.env`):
-
 ```bash
-# Binance API (opcjonalne dla backtestu)
+# Binance API (opcjonalne — wymagane tylko dla live tradingu)
 BINANCE_API_KEY=your_api_key
 BINANCE_SECRET_KEY=your_secret_key
 
-# Port serwera
+# Serwer
 PORT=3000
 
-# Parametry agenta
+# Agent
 EPSILON_START=1.0
 EPSILON_END=0.1
 EPSILON_DECAY=0.995
@@ -212,169 +204,115 @@ GAMMA=0.99
 REPLAY_BUFFER_SIZE=10000
 BATCH_SIZE=32
 
-# Risk management
-POSITION_SIZE=0.95   # % kapitału na transakcję
-STOP_LOSS=0.02       # 2% stop-loss
-TAKE_PROFIT=0.04     # 4% take-profit
+# Risk
+POSITION_SIZE=0.95
+STOP_LOSS=0.02
+TAKE_PROFIT=0.04
 ```
+
+---
+
+## 📈 Paper Trading
+
+Symulacja tradingu z realnymi cenami. **Zalecane przed live tradingiem.**
+
+- 6 strategii: trend, mean_reversion, momentum, macd, scalping, grid
+- Konfigurowalne SL/TP
+- Trailing stop loss
+- Equity curve w czasie rzeczywistym
+- Historia transakcji (CSV/JSON export)
+
+---
+
+## 🧪 Testy
+
+### Playwright E2E (35 test cases)
+
+```bash
+cd react-client
+npx playwright install chromium
+npx playwright test tests/dashboard.spec.js
+```
+
+Testowane: każdy button, nawigacja, API endpoints, edge case'y.
+
+### Raporty bugów
+
+Tester: **Jarvis Horner** 🔍
+
+Raporty w `bugs/` — szablon, severity definitions, checklista, per-aplikacja.
+
+---
+
+## 🔗 API Endpoints
+
+<details>
+<summary>Rozwiń pełną listę endpointów</summary>
+
+### Status
+| GET | `/api/status` | Status serwera, ceny, metrics |
+| GET | `/api/prices` | BTC, ETH, SOL |
+
+### Training
+| GET | `/api/training/status` | Status treningu |
+| POST | `/api/training/start` | Start treningu |
+| POST | `/api/training/stop` | Stop treningu |
+| POST | `/api/training/save` | Zapisz model |
+
+### Episode Data
+| GET | `/api/episode-data` | Dane ostatniego epizodu |
+| GET | `/api/episode-history` | Historia epizodów |
+
+### Paper Trading
+| GET | `/api/paper-trading` | Status |
+| POST | `/api/paper-trading/start` | Start |
+| POST | `/api/paper-trading/stop` | Stop |
+| POST | `/api/paper-trading/reset` | Reset do $1000 |
+| GET | `/api/paper-trading/history` | Historia trade'ów |
+| GET | `/api/paper-trading/equity-curve` | Equity curve |
+| POST | `/api/paper-trading/sltp?sl=X&tp=Y` | Set SL/TP |
+| POST | `/api/paper-trading/strategy?strategy=X` | Set strategy |
+| POST | `/api/paper-trading/scalp-params?...` | Scalping params |
+
+### Backtest
+| GET | `/api/strategy/compare` | Porównanie 6 strategii |
+| GET | `/api/htf-trend` | HTF trend (1H, 4H) |
+| GET | `/api/sentiment?keyword=BTC` | Market sentiment |
+
+### Risk & Portfolio
+| GET | `/api/risk/report` | Risk report |
+| GET | `/api/portfolio` | Portfolio |
+| GET | `/api/portfolio/heatmap` | Heatmap |
+| GET | `/api/attribution` | P&L attribution |
+
+### Monte Carlo
+| GET | `/api/monte-carlo/quick` | 100 symulacji |
+
+### Optimizer
+| GET | `/api/optimizer/status` | Status |
+| POST | `/api/optimizer/start` | Start optymalizacji |
+| POST | `/api/optimizer/stop` | Stop |
+
+### Live Trading
+| GET | `/api/live-trading/status` | Status |
+| GET | `/api/live-trading/config-check` | Konfiguracja API |
+| POST | `/api/live-trading/open-long` | Otwórz long |
+| POST | `/api/live-trading/close-position` | Zamknij pozycję |
+
+### Alerts
+| GET | `/api/alerter/status` | Status |
+| POST | `/api/alerter/test` | Test alert |
+
+</details>
 
 ---
 
 ## 🐳 Docker
 
 ```bash
-# Build + uruchom
 docker-compose up -d
-
-# Dashboard dostępny na http://localhost:3000
+# Dashboard: http://localhost:3000
 ```
-
----
-
-## 📈 Dashboard (client/index.html)
-
-- **Ceny na żywo** — BTC, ETH, SOL z WebSocket
-- **Portfolio** — stan konta, pozycja, unrealized P&L
-- **Wykresy** — cena + wskaźniki techniczne (Chart.js)
-- **Kontrolki** — start/stop/parametry agenta
-- **Metryki** — Sharpe, MaxDD, WinRate w czasie rzeczywistym
-- **Logi** — ostatnie transakcje i decyzje agenta
-- **Paper Trading** — pełna symulacja z SL/TP, trailing stop
-- **Live Trading** — handel na realnym rachunku Binance
-
-> 🆕 **Nowy frontend React** w `react-client/` — Vite + React Query + Zustand + Recharts. W trakcie rozwoju.
-
----
-
-## 📈 Paper Trading
-
-Pełna symulacja tradingu z realnymi cenami z Binance. **Paper trading jest zalecany przed handlem na żywo.**
-
-### Funkcje
-
-- **Trailing Stop Loss** — aktywacja przy 1% zysku, trailing 0.75% pod szczytem
-- **Stop Loss / Take Profit** — konfigurowalne (domyślnie SL: 2%, TP: 4%)
-- **Strategie** — trend, mean_reversion, momentum, macd, scalping, grid
-- **Equity Curve** — śledzenie equity + drawdown w czasie rzeczywistym
-- **Historia** — logowanie wszystkich transakcji paperowych
-- **Alerty** — powiadomienia Telegram przy milestone'ach i dużych drawdownach
-
-### Uruchomienie
-
-1. Dashboard → sekcja **Paper Trading**
-2. Wybierz strategię z dropdown
-3. Kliknij **START PAPER TRADING**
-4. Monitoruj equity curve i statystyki
-
----
-
-## 🔗 API Endpoints
-
-### Server Status
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/status` | Status serwera, ceny, tradingActive |
-| GET | `/api/prices` | Aktualne ceny BTC, ETH, SOL |
-
-### Agent & Training
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/training/status` | Status treningu (isTraining, epsilon, episode, duration) |
-| POST | `/api/training/start` | Start treningu |
-| POST | `/api/training/stop` | Stop treningu |
-| POST | `/api/training/save` | Zapisz model ręcznie |
-| GET | `/api/hyperparams` | Pobierz hyperparametry |
-| POST | `/api/hyperparams` | Zaktualizuj hyperparametry |
-
-### Episode Data
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/episode-data` | Dane ostatniego epizodu (trades, equity, epsilon) |
-| GET | `/api/episode-history` | Historia zakończonych epizodów |
-| GET | `/api/episode-history/detail/:episode` | Szczegóły epizodu N |
-
-### Metrics
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/metrics` | Metryki (Sharpe, MaxDD, WinRate, PF) |
-| GET | `/api/trades` | Ostatnie 20 transakcji |
-| GET | `/api/portfolio` | Stan portfolio |
-| GET | `/api/buffer-health` | Health check replay buffer |
-
-### HTF Trend
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/htf-trend` | High timeframe trend (1H, 4H) |
-| GET | `/api/sentiment` | Market sentiment (mock) |
-| GET | `/api/ml-insights` | ML insights |
-
-### Paper Trading
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/paper-trading` | Status, capital, pozycje, statystyki |
-| GET | `/api/paper-trading/status` | Status paper tradera |
-| POST | `/api/paper-trading/start` | Start paper trading (kapitał $1000) |
-| POST | `/api/paper-trading/stop` | Stop paper trading |
-| POST | `/api/paper-trading/toggle` | Toggle paper trading |
-| POST | `/api/paper-trading/reset` | Reset do $1000 |
-| POST | `/api/paper-trading/sltp` | Ustaw SL/TP (body: `{"sl":2.0,"tp":4.0}`) |
-| POST | `/api/paper-trading/strategy` | Ustaw strategię (body: `{"strategy":"trend"}`) |
-| POST | `/api/paper-trading/scalp-params` | Ustaw parametry scalping |
-| GET | `/api/paper-trading/history` | Historia zamkniętych trade'ów |
-| GET | `/api/paper-trading/equity-curve` | Equity curve + drawdown |
-| POST | `/api/paper-trading/clear-history` | Wyczyść historię |
-
-### Backtest
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/backtest/quick` | Szybki backtest (trend strategy) |
-| GET | `/api/backtest/full` | Pełny backtest |
-| GET | `/api/backtest/scalping` | Backtest scalping strategii |
-| GET | `/api/backtest/grid` | Backtest grid strategii |
-| POST | `/api/strategy/compare` | Porównanie wszystkich strategii |
-| GET | `/api/strategy/compare/chart` | Wykres porównania strategii |
-
-### Monte Carlo
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/monte-carlo/quick` | Szybki Monte Carlo (100 symulacji) |
-| GET | `/api/monte-carlo/full` | Pełny Monte Carlo (1000 symulacji) |
-
-### Risk Management
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/risk/report` | Risk report |
-| GET | `/api/risk/can-trade` | Sprawdź czy można handlować |
-
-### Live Trading (Binance)
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/live-trading/status` | Status live tradera |
-| POST | `/api/live-trading/start` | Start live tradera |
-| POST | `/api/live-trading/stop` | Stop live tradera |
-| GET | `/api/live-trading/stats` | Live trading stats |
-| POST | `/api/live-trading/open-long` | Otwórz long (body: `{"quantity":0.001}`) |
-| POST | `/api/live-trading/close-long` | Zamknij long |
-| POST | `/api/live-trading/configure` | Konfiguruj (apiKey, secret, SL, TP) |
-| GET | `/api/live-trading/history` | Historia live trade'ów |
-| GET | `/api/live-trading/config-check` | Sprawdź konfigurację API |
-
-### Alerts & Notifications
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/alerter/status` | Status alertera |
-| POST | `/api/alerter/test` | Test notification |
 
 ---
 

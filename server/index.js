@@ -2645,6 +2645,15 @@ const server = http.createServer(async (req, res) => {
     // Training controls
     if (url === '/api/training/start') {
         if (!trainingActive) {
+            // Fetch fresh candles and reset environment before starting
+            const candles = await fetchCandles('BTCUSDT', '1m', 200);
+            if (candles.length < 60) {
+                res.writeHead(500);
+                res.end(JSON.stringify({ success: false, error: 'Brak danych cenowych z Binance. Spróbuj ponownie za chwilę.' }));
+                return;
+            }
+            env.reset(candles);
+            episodeStartBalance = env.balance();
             trainingActive = true;
             trainingStartTime = Date.now();
             
@@ -3356,6 +3365,12 @@ async function trainingStep() {
         currentEpisodeSteps = [];
         episodeEpsilons = [];
         episodeEquity = [];
+
+        // Fetch fresh candles for new episode (no stale data reuse)
+        const newCandles = await fetchCandles('BTCUSDT', '1m', 200);
+        if (newCandles.length >= 60) {
+            env.reset(newCandles);
+        }
         episodeStartBalance = env.balance();
 
         // Start new episode (increments agent.episode)

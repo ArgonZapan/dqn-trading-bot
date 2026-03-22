@@ -272,6 +272,7 @@ async function paperRebalancingStep() {
                     exitReason: triggered ? reason : 'REBALANCE_FLIP'
                 };
                 paperTrading.closedTrades.push(closed);
+                tradeJournal.addTrade({ ...closed, isPaper: true, direction: pos.side === 'LONG' ? 'LONG' : 'SHORT' });
                 if (pos.side === 'LONG') {
                     paperTrading.capital += exitValue - exitFee;
                 } else {
@@ -1033,6 +1034,7 @@ async function paperTradingStep() {
             exitReason: slTpTriggered ? slTpReason : 'SIGNAL'
         };
         paperTrading.closedTrades.push(closed);
+        tradeJournal.addTrade({ ...closed, isPaper: true, direction: paperOpenPosition.side });
         
         // Return capital + P&L
         if (paperOpenPosition.side === 'LONG') {
@@ -1253,12 +1255,12 @@ const server = http.createServer(async (req, res) => {
                 tradeJournal.addTrade({
                     id: paperOpenPosition.id,
                     symbol: 'BTCUSDT',
-                    direction: 'LONG',
+                    direction: paperOpenPosition.side,
                     strategy: paperStrategy,
                     entryPrice: paperOpenPosition.entryPrice,
                     exitPrice: currentPrice,
                     quantity: paperOpenPosition.quantity,
-                    pnlPercent: ((currentPrice - paperOpenPosition.entryPrice) / paperOpenPosition.entryPrice) * 100,
+                    pnlPercent: ((currentPrice - paperOpenPosition.entryPrice) / paperOpenPosition.entryPrice) * 100 * (paperOpenPosition.side === 'SHORT' ? -1 : 1),
                     pnlAbsolute: netPnl,
                     commission: paperOpenPosition.fee + exitFee,
                     exitReason: 'STOP_API',
@@ -1295,6 +1297,7 @@ const server = http.createServer(async (req, res) => {
                     timestamp: Date.now(),
                     entryTime: pos.entryTime, exitReason: 'STOP_API'
                 });
+                try { tradeJournal.addTrade({ id: pos.id, symbol: asset, direction: pos.side, strategy: 'multi', entryPrice: pos.entryPrice, exitPrice: price, quantity: pos.quantity, pnlPercent: (pnl - pos.fee - price * pos.quantity * 0.001) / (pos.entryPrice * pos.quantity) * 100, pnlAbsolute: pnl - pos.fee - price * pos.quantity * 0.001, commission: pos.fee + price * pos.quantity * 0.001, exitReason: 'STOP_API', entryTime: pos.entryTime, exitTime: new Date().toISOString(), isPaper: true }); } catch(e) {}
                 paperMultiPositions[asset] = null;
             }
         }

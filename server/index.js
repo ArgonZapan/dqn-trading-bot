@@ -2630,6 +2630,18 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: true }));
         return;
     }
+
+    // GET /api/training/status - zwraca status treningu
+    if (url === '/api/training/status') {
+        res.end(JSON.stringify({
+            isTraining: trainingActive,
+            trainingDurationMs: trainingActive ? (Date.now() - trainingStartTime) : 0,
+            episode: agent.episode,
+            epsilon: agent.epsilon,
+            metrics: agent.getMetrics()
+        }));
+        return;
+    }
     
     // GET /api/alerter/test - test email/SMS alerts
     if (url === '/api/alerter/test') {

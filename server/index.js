@@ -572,6 +572,26 @@ function fetchJSON(url) {
     });
 }
 
+// Dynamic candle generation for completed episodes (~20 candles target)
+function generateCandles(steps, targetCandleCount = 20) {
+    if (steps.length < 2) return [];
+    const totalTime = steps[steps.length - 1].time - steps[0].time;
+    const bucketSize = Math.max(1, Math.floor(totalTime / targetCandleCount / 1000)); // w sekundach
+    const buckets = {};
+    for (const step of steps) {
+        const t = step.time || Date.now();
+        const bucket = Math.floor(t / (bucketSize * 1000)) * bucketSize;
+        if (!buckets[bucket]) {
+            buckets[bucket] = { time: bucket, open: step.price, high: step.price, low: step.price, close: step.price };
+        } else {
+            buckets[bucket].high = Math.max(buckets[bucket].high, step.price);
+            buckets[bucket].low = Math.min(buckets[bucket].low, step.price);
+            buckets[bucket].close = step.price;
+        }
+    }
+    return Object.values(buckets).sort((a, b) => a.time - b.time);
+}
+
 // Fetch Binance klines (candles)
 async function fetchCandles(symbol = 'BTCUSDT', interval = '1m', limit = 100) {
     try {
@@ -3343,28 +3363,14 @@ async function trainingStep() {
         bufferHealth.resetActionCounts();
         
         // Save current episode data to prevEpisodeData BEFORE reset
-        {
-            const bucketSize = 5;
-            const buckets = {};
-            for (const p of currentEpisodeSteps) {
-                const t = p.time || Date.now();
-                const bucketKey = Math.floor(t / (bucketSize * 1000)) * bucketSize;
-                if (!buckets[bucketKey]) {
-                    buckets[bucketKey] = { time: bucketKey, open: p.price, high: p.price, low: p.price, close: p.price };
-                } else {
-                    buckets[bucketKey].high = Math.max(buckets[bucketKey].high, p.price);
-                    buckets[bucketKey].low = Math.min(buckets[bucketKey].low, p.price);
-                    buckets[bucketKey].close = p.price;
-                }
-            }
-            prevEpisodeData = {
-                candles: Object.values(buckets).sort((a, b) => a.time - b.time),
-                trades: [...episodeTrades],
-                equity: [...episodeEquity],
-                episode: completedEpisode,
-                pnlPercent
-            };
-        }
+        // Use dynamic bucket size so we always get ~20 candles for completed episodes
+        prevEpisodeData = {
+            candles: generateCandles(currentEpisodeSteps, 20),
+            trades: [...episodeTrades],
+            equity: [...episodeEquity],
+            episode: completedEpisode,
+            pnlPercent
+        };
 
         // Reset episode tracking state BEFORE starting new episode
         episodeTrades = [];

@@ -54,7 +54,7 @@ test.describe('Episode Chart — test działania', () => {
     await page.goto(BASE, { waitUntil: 'networkidle', timeout: 15000 });
 
     for (const section of ['backtest', 'paper', 'analytics', 'live']) {
-      const link = page.locator(`a[href="/${section}"]`);
+      const link = page.locator(`.sidebar-link[href="/${section}"]`);
       if (await link.count() > 0) {
         await link.click();
         await page.waitForTimeout(1000);

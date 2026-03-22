@@ -60,7 +60,9 @@ class Alerter {
      * Log to alerts.log (fallback when no email/SMS)
      */
     _log(subject, body) {
-        const msg = `[${new Date().toISOString()}] [ALERT] ${subject}\n${body}\n${'─'.repeat(50)}`;
+        const safeSubject = subject == null ? 'UNKNOWN' : String(subject);
+        const safeBody = body == null ? 'No details' : String(body);
+        const msg = `[${new Date().toISOString()}] [ALERT] ${safeSubject}\n${safeBody}\n${'─'.repeat(50)}`;
         console.log(msg);
         try {
             fs.appendFileSync(ALERTS_LOG, msg + '\n');
@@ -73,7 +75,10 @@ class Alerter {
      * Send alert via email, SMS, Telegram, or log
      */
     async send(type, subject, body) {
-        const fullSubject = `[DQN] ${subject}`;
+        const safeType = type == null ? 'ALERT' : String(type);
+        const safeSubject = subject == null ? 'UNKNOWN' : String(subject);
+        const safeBody = body == null ? 'No details' : String(body);
+        const fullSubject = `[DQN] ${safeSubject}`;
         
         // Always log
         this._log(fullSubject, body);
@@ -87,11 +92,11 @@ class Alerter {
                     from: `"DQN Trading Bot" <${this.smtpUser}>`,
                     to: this.alertEmail,
                     subject: fullSubject,
-                    text: body,
+                    text: safeBody,
                     html: `<div style="font-family: Arial; padding: 20px; background: #f5f5f5;">
                         <h2 style="color: #333;">🤖 DQN Trading Bot</h2>
-                        <h3 style="color: #e67e22;">${subject}</h3>
-                        <pre style="color: #555; font-size: 14px;">${body}</pre>
+                        <h3 style="color: #e67e22;">${safeSubject}</h3>
+                        <pre style="color: #555; font-size: 14px;">${safeBody}</pre>
                         <hr><p style="color: #999; font-size: 12px;">${new Date().toLocaleString()}</p>
                     </div>`
                 });
@@ -114,7 +119,7 @@ class Alerter {
         
         // Try Telegram
         if (this.telegramEnabled) {
-            await this._sendTelegram(`📢 ${type}: ${subject}\n${body}`);
+            await this._sendTelegram(`📢 ${safeType}: ${safeSubject}\n${safeBody}`);
         }
         
         return sent;

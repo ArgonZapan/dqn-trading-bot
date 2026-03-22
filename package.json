@@ -8,7 +8,7 @@
     "train": "node scripts/train.js",
     "backtest": "node scripts/backtest.js",
     "test": "node test.js",
-    "test:unit": "node node_modules/mocha/bin/mocha.js tests/**/*.test.js",
+    "test:unit": "node node_modules/.bin/vitest run tests/unit && node node_modules/mocha/bin/mocha.js tests/environment.test.js tests/indicators.test.js tests/mlFeatures.test.js tests/monteCarlo.test.js tests/portfolio.test.js tests/volatilityRegime.test.js",
     "test:watch": "node node_modules/mocha/bin/mocha.js tests/**/*.test.js --watch"
   },
   "keywords": [

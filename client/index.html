@@ -754,8 +754,13 @@ Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
 <button class="btn" onclick="exportPaperTrades('csv')" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#10b981,#059669)">📥 CSV</button>
 <button class="btn" onclick="exportPaperTrades('json')" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#3b82f6,#1d4ed8)">📥 JSON</button>
 <button class="btn" onclick="exportPaperEquity('csv')" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#8b5cf6,#7c3aed)">📊 EQ CSV</button>
+<button class="btn" onclick="toggleRegimePerf()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#f59e0b,#d97706)">📉 REGIME</button>
 </div>
 <div id="paperStatus" style="margin-top:8px;font-size:.65rem;color:var(--text2)">Status: Stopped</div>
+<div id="regimePerfSection" style="display:none;margin-top:10px;padding:10px;background:rgba(245,158,11,0.08);border-radius:8px;font-size:.6rem">
+<div style="font-weight:700;margin-bottom:8px;color:#f59e0b;text-transform:uppercase;font-size:.65rem">📉 Regime Performance</div>
+<div id="regimePerfContent"></div>
+</div>
 <div id="paperHistorySection" style="display:none;margin-top:12px;max-height:200px;overflow-y:auto">
 <div id="paperHistoryList" style="font-size:.65rem"></div>
 </div>
@@ -1950,22 +1955,82 @@ async function loadPaperHistory(){
       list.innerHTML='<div style="color:var(--text2);padding:8px">No trades yet</div>';
       return;
     }
-    let html='<table style="width:100%;border-collapse:collapse"><tr style="border-bottom:1px solid var(--border)"><td style="padding:4px;font-weight:600"><span class="paper-badge">PAPER</span></td><td style="padding:4px">Side</td><td style="padding:4px">Entry</td><td style="padding:4px">Exit</td><td style="padding:4px">P&L</td><td style="padding:4px">Reason</td></tr>';
+    const regimeColors={LOW:'#22c55e',NORMAL:'#3b82f6',HIGH:'#f97316',EXTREME:'#ef4444'};
+    const regimeBadges={LOW:'🟢',NORMAL:'🔵',HIGH:'🟠',EXTREME:'🔴'};
+    let html='<table style="width:100%;border-collapse:collapse"><tr style="border-bottom:1px solid var(--border)"><td style="padding:4px;font-weight:600"><span class="paper-badge">P</span></td><td style="padding:4px">Regime</td><td style="padding:4px">Side</td><td style="padding:4px">Entry</td><td style="padding:4px">Exit</td><td style="padding:4px">P&L</td><td style="padding:4px">Reason</td></tr>';
     r.trades.slice().reverse().forEach(t=>{
       const pnlClass=t.pnl>=0?'color:#22c55e':'color:#ef4444';
       const sideClass=t.side==='LONG'?'color:#22c55e':'color:#f97316';
+      const reg=t.regime||'NORMAL';
+      const regBadge=regimeBadges[reg]||'🔵';
+      const regColor=regimeColors[reg]||'#3b82f6';
+      const regStyle=`font-size:.5rem;background:${regColor}22;color:${regColor};padding:1px 4px;border-radius:3px`;
       html+=`<tr style="border-bottom:1px solid var(--border)">
         <td style="padding:4px"><span class="paper-badge">P</span></td>
+        <td style="padding:4px"><span style="${regStyle}">${regBadge}${reg}</span></td>
         <td style="padding:4px;font-weight:600;${sideClass}">${t.side}</td>
         <td style="padding:4px">$${t.entryPrice.toFixed(2)}</td>
         <td style="padding:4px">$${t.exitPrice.toFixed(2)}</td>
         <td style="padding:4px;${pnlClass}">${t.pnl>=0?'+':''}${t.pnl.toFixed(2)}</td>
-        <td style="padding:4px;color:var(--text2)">${t.exitReason}</td>
+        <td style="padding:4px;color:var(--text2)">${t.exitReason||'--'}</td>
       </tr>`;
     });
     html+='</table>';
     list.innerHTML=html;
   } catch(e){document.getElementById('paperHistoryList').innerHTML='Error loading history';}
+}
+let regimePerfVisible=false;
+async function toggleRegimePerf(){
+  regimePerfVisible=!regimePerfVisible;
+  const section=document.getElementById('regimePerfSection');
+  section.style.display=regimePerfVisible?'block':'none';
+  if(regimePerfVisible) await loadRegimePerf();
+}
+async function loadRegimePerf(){
+  try {
+    const r=await fetch('/api/paper-trading/regime-stats').then(x=>x.json());
+    const el=document.getElementById('regimePerfContent');
+    if(!el)return;
+    const regimes=['LOW','NORMAL','HIGH','EXTREME'];
+    const colors={LOW:'#22c55e',NORMAL:'#3b82f6',HIGH:'#f97316',EXTREME:'#ef4444'};
+    const labels={LOW:'🟢 Low',NORMAL:'🔵 Normal',HIGH:'🟠 High',EXTREME:'🔴 Extreme'};
+    let html='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
+    for(const reg of regimes){
+      const perf=r.computedRegimePerf&&r.computedRegimePerf[reg]?r.computedRegimePerf[reg]:null;
+      const color=colors[reg];
+      const label=labels[reg];
+      const live=r.regimeStats&&r.regimeStats[reg]?r.regimeStats[reg]:null;
+      if(!perf||perf.trades===0){
+        html+=`<div style="padding:6px;background:rgba(255,255,255,0.03);border-radius:6px;border-left:3px solid ${color}">
+          <div style="color:${color};font-weight:700">${label}</div>
+          <div style="color:var(--text2)">No trades yet</div>
+        </div>`;
+      } else {
+        const wr=parseFloat(perf.winRate);
+        const wrColor=wr>=60?'#22c55e':wr>=45?'#eab308':'#ef4444';
+        html+=`<div style="padding:6px;background:rgba(255,255,255,0.03);border-radius:6px;border-left:3px solid ${color}">
+          <div style="color:${color};font-weight:700;margin-bottom:3px">${label}</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;font-size:.58rem">
+            <div>Trades: <span style="color:${perf.trades>0?'var(--text)':'var(--text2)'}">${perf.trades}</span></div>
+            <div>Win%: <span style="color:${wrColor}">${perf.winRate}%</span></div>
+            <div>P&L: <span style="color:${parseFloat(perf.pnl)>=0?'#22c55e':'#ef4444'}">$${parseFloat(perf.pnl).toFixed(2)}</span></div>
+            <div>Avg: <span style="color:${parseFloat(perf.avgPnl)>=0?'#22c55e':'#ef4444'}">$${perf.avgPnl}</span></div>
+            <div>Best: <span style="color:#22c55e">+$${perf.best}</span></div>
+            <div>Worst: <span style="color:#ef4444">$${perf.worst}</span></div>
+          </div>
+          ${perf.exitReasons?`<div style="margin-top:4px;font-size:.55rem;color:var(--text2)">${Object.entries(perf.exitReasons).map(([k,v])=>k+': '+v).join(' · ')}</div>`:''}
+        </div>`;
+      }
+    }
+    html+='</div>';
+    // Show current live regime
+    if(live&&live.trades>0){
+      html+=`<div style="margin-top:6px;padding:4px 6px;background:rgba(99,102,241,0.1);border-radius:4px;font-size:.55rem;color:var(--text2)">
+        Live tracking: ${live.trades} trades · ${live.wins} wins · $${live.pnl.toFixed(2)} P&L
+      </div>`;
+    }
+    el.innerHTML=html;
+  } catch(e){document.getElementById('regimePerfContent').innerHTML='<div style="color:var(--text2)">Error loading regime data</div>';}
 }
 async function clearPaperHistory(){
   if(!confirm('Clear trade history?'))return;

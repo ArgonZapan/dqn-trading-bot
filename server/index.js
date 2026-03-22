@@ -49,6 +49,14 @@ let paperTrading = {
     }
 };
 
+// Per-regime stats: { LOW: {trades, wins, pnl}, NORMAL: {...}, HIGH: {...}, EXTREME: {...} }
+let paperRegimeStats = {
+    LOW: { trades: 0, wins: 0, pnl: 0 },
+    NORMAL: { trades: 0, wins: 0, pnl: 0 },
+    HIGH: { trades: 0, wins: 0, pnl: 0 },
+    EXTREME: { trades: 0, wins: 0, pnl: 0 }
+};
+
 // Paper trading equity curve tracking
 let paperEquityCurve = [];  // [{time, equity, drawdown, price}]
 const MAX_EQUITY_CURVE = 500; // keep last 500 data points
@@ -284,10 +292,18 @@ async function paperRebalancingStep() {
                     pnlPct: pos.pnlPct,
                     timestamp: now,
                     entryTime: pos.entryTime,
-                    exitReason: triggered ? reason : 'REBALANCE_FLIP'
+                    exitReason: triggered ? reason : 'REBALANCE_FLIP',
+                    regime: paperVolRegimes[asset] ? paperVolRegimes[asset].getRegime() : paperVolRegime.getRegime()
                 };
                 paperTrading.closedTrades.push(closed);
                 tradeJournal.addTrade({ ...closed, isPaper: true, direction: pos.side === 'LONG' ? 'LONG' : 'SHORT' });
+                // Update per-regime stats
+                const reg = closed.regime || 'NORMAL';
+                if (paperRegimeStats[reg]) {
+                    paperRegimeStats[reg].trades++;
+                    if (netPnl > 0) paperRegimeStats[reg].wins++;
+                    paperRegimeStats[reg].pnl += netPnl;
+                }
                 if (pos.side === 'LONG') {
                     paperTrading.capital += exitValue - exitFee;
                 } else {
@@ -1077,10 +1093,19 @@ async function paperTradingStep() {
             pnlPct: ((currentPrice - paperOpenPosition.entryPrice) / paperOpenPosition.entryPrice) * 100 * (paperOpenPosition.side === 'SHORT' ? -1 : 1),
             timestamp: now,
             entryTime: paperOpenPosition.entryTime,
-            exitReason: slTpTriggered ? slTpReason : 'SIGNAL'
+            exitReason: slTpTriggered ? slTpReason : 'SIGNAL',
+            regime: paperVolRegime.getRegime(),
+            regimeAtEntry: paperOpenPosition.regimeAtEntry || paperVolRegime.getRegime()
         };
         paperTrading.closedTrades.push(closed);
         tradeJournal.addTrade({ ...closed, isPaper: true, direction: paperOpenPosition.side });
+        // Update per-regime stats
+        const reg = closed.regime || 'NORMAL';
+        if (paperRegimeStats[reg]) {
+            paperRegimeStats[reg].trades++;
+            if (netPnl > 0) paperRegimeStats[reg].wins++;
+            paperRegimeStats[reg].pnl += netPnl;
+        }
         
         // Return capital + P&L
         if (paperOpenPosition.side === 'LONG') {
@@ -1317,6 +1342,12 @@ const server = http.createServer(async (req, res) => {
         paperTrading.capital = 1000;
         paperTrading.positions = [];
         paperTrading.closedTrades = [];
+        paperRegimeStats = {
+            LOW: { trades: 0, wins: 0, pnl: 0 },
+            NORMAL: { trades: 0, wins: 0, pnl: 0 },
+            HIGH: { trades: 0, wins: 0, pnl: 0 },
+            EXTREME: { trades: 0, wins: 0, pnl: 0 }
+        };
         paperOpenPosition = null;
         // Reset multi-asset positions
         for (const asset of REBALANCE_ASSETS) paperMultiPositions[asset] = null;
@@ -1348,7 +1379,10 @@ const server = http.createServer(async (req, res) => {
                 quantity: paperOpenPosition.quantity,
                 fee: exitFee,
                 pnl: netPnl,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                entryTime: paperOpenPosition.entryTime,
+                exitReason: 'MANUAL_STOP',
+                regime: paperVolRegime.getRegime()
             });
             // Record in Trade Journal
             try {
@@ -1395,7 +1429,8 @@ const server = http.createServer(async (req, res) => {
                     fee: pos.fee + price * pos.quantity * 0.001,
                     pnl: pnl - pos.fee - price * pos.quantity * 0.001,
                     timestamp: Date.now(),
-                    entryTime: pos.entryTime, exitReason: 'STOP_API'
+                    entryTime: pos.entryTime, exitReason: 'STOP_API',
+                    regime: paperVolRegimes[asset] ? paperVolRegimes[asset].getRegime() : 'NORMAL'
                 });
                 try { tradeJournal.addTrade({ id: pos.id, symbol: asset, direction: pos.side, strategy: 'multi', entryPrice: pos.entryPrice, exitPrice: price, quantity: pos.quantity, pnlPercent: (pnl - pos.fee - price * pos.quantity * 0.001) / (pos.entryPrice * pos.quantity) * 100, pnlAbsolute: pnl - pos.fee - price * pos.quantity * 0.001, commission: pos.fee + price * pos.quantity * 0.001, exitReason: 'STOP_API', entryTime: pos.entryTime, exitTime: new Date().toISOString(), isPaper: true }); } catch(e) {}
                 paperMultiPositions[asset] = null;
@@ -1454,7 +1489,8 @@ const server = http.createServer(async (req, res) => {
                     pnl: netPnl,
                     timestamp: Date.now(),
                     entryTime: paperOpenPosition.entryTime,
-                    exitReason: 'MANUAL_CLOSE'
+                    exitReason: 'MANUAL_CLOSE',
+                    regime: paperVolRegime.getRegime()
                 });
                 if (paperOpenPosition.side === 'LONG') {
                     paperTrading.capital += paperOpenPosition.quantity * currentPrice - exitFee;
@@ -1737,13 +1773,59 @@ const server = http.createServer(async (req, res) => {
             avgWin: s.avgWin,
             avgLoss: s.avgLoss,
             currentCapital: paperTrading.capital,
-            equityPeak: paperEquityCurve.length > 0 ? Math.max(...paperEquityCurve.map(e => e.equity)) : 1000
+            equityPeak: paperEquityCurve.length > 0 ? Math.max(...paperEquityCurve.map(e => e.equity)) : 1000,
+            // Per-regime breakdown
+            regimeStats: paperRegimeStats
         });
+        return;
+    }
+    
+    // GET /api/paper-trading/regime-stats - per-regime performance breakdown
+    if (url === '/api/paper-trading/regime-stats') {
+        const closed = paperTrading.closedTrades;
+        // Build per-regime breakdown from closed trades
+        const regimeMap = { LOW: [], NORMAL: [], HIGH: [], EXTREME: [] };
+        closed.forEach(t => {
+            const r = t.regime || 'NORMAL';
+            if (regimeMap[r]) regimeMap[r].push(t);
+        });
+        const regimePerf = {};
+        for (const [reg, trades] of Object.entries(regimeMap)) {
+            if (trades.length === 0) {
+                regimePerf[reg] = { trades: 0, wins: 0, pnl: 0, winRate: 0, avgPnl: 0 };
+                continue;
+            }
+            const wins = trades.filter(t => t.pnl > 0).length;
+            const totalPnl = trades.reduce((a, t) => a + (t.pnl || 0), 0);
+            regimePerf[reg] = {
+                trades: trades.length,
+                wins,
+                pnl: totalPnl,
+                winRate: (wins / trades.length * 100).toFixed(1),
+                avgPnl: (totalPnl / trades.length).toFixed(2),
+                // Best/worst in this regime
+                best: Math.max(...trades.map(t => t.pnl || 0)).toFixed(2),
+                worst: Math.min(...trades.map(t => t.pnl || 0)).toFixed(2),
+                // Exit reason breakdown
+                exitReasons: trades.reduce((acc, t) => {
+                    const rsn = t.exitReason || 'UNKNOWN';
+                    acc[rsn] = (acc[rsn] || 0) + 1;
+                    return acc;
+                }, {})
+            };
+        }
+        res.json({ regimeStats: paperRegimeStats, computedRegimePerf: regimePerf });
         return;
     }
     
     if (url === '/api/paper-trading/clear-history') {
         paperTrading.closedTrades = [];
+        paperRegimeStats = {
+            LOW: { trades: 0, wins: 0, pnl: 0 },
+            NORMAL: { trades: 0, wins: 0, pnl: 0 },
+            HIGH: { trades: 0, wins: 0, pnl: 0 },
+            EXTREME: { trades: 0, wins: 0, pnl: 0 }
+        };
         updatePaperStats();
         // Also clear paper trades from journal
         if (tradeJournal && tradeJournal.trades) {

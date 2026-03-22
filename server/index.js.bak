@@ -1802,15 +1802,14 @@ const server = http.createServer(async (req, res) => {
             winRateByRR[key] = val.total > 0 ? Math.round((val.wins / val.total) * 100) / 100 : null;
         }
         
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
+        res.json({
             openPositions,
             averageRR,
             bestRR,
             worstRR,
             winRateByRR,
             closedWithRRCount: closedWithRR.length
-        }));
+        });
         return;
     }
     
@@ -1881,8 +1880,7 @@ const server = http.createServer(async (req, res) => {
         const bestTrade = closed.length > 0 ? Math.max(...closed.map(t => t.pnl)) : 0;
         const worstTrade = closed.length > 0 ? Math.min(...closed.map(t => t.pnl)) : 0;
         const avgProfitPerTrade = closed.length > 0 ? s.totalPnl / closed.length : 0;
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
+        res.json({
             totalTrades: s.totalTrades,
             winningTrades: s.winningTrades,
             losingTrades: s.losingTrades,
@@ -1906,7 +1904,7 @@ const server = http.createServer(async (req, res) => {
             equityPeak: paperEquityCurve.length > 0 ? Math.max(...paperEquityCurve.map(e => e.equity)) : 1000,
             // Per-regime breakdown
             regimeStats: paperRegimeStats
-        }));
+        });
         return;
     }
     
@@ -1944,7 +1942,7 @@ const server = http.createServer(async (req, res) => {
                 }, {})
             };
         }
-        res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ regimeStats: paperRegimeStats, computedRegimePerf: regimePerf }));
+        res.json({ regimeStats: paperRegimeStats, computedRegimePerf: regimePerf });
         return;
     }
     
@@ -1970,10 +1968,9 @@ const server = http.createServer(async (req, res) => {
     if (url === '/api/paper-trading/trades') {
         try {
             const result = tradeJournal.listTrades(1, 50, { isPaper: true });
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(result));
+            res.json(result);
         } catch(e) {
-            res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ items: [], total: 0, error: e.message }));
+            res.json({ items: [], total: 0, error: e.message });
         }
         return;
     }
@@ -2101,7 +2098,7 @@ const server = http.createServer(async (req, res) => {
                 // Auto-save result
                 MonteCarlo.saveResults(result);
                 console.log(`🎲 Monte Carlo: ${result.simulations} sims | ${trades.length} trades | Prob of loss: ${result.probabilityOfLoss}%`);
-                res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: true, simulations: result.simulations, tradesUsed: trades.length, result }));
+                res.json({ success: true, simulations: result.simulations, tradesUsed: trades.length, result });
             } catch(e) {
                 res.writeHead(400);
                 res.end(JSON.stringify({ error: e.message }));
@@ -2191,7 +2188,7 @@ const server = http.createServer(async (req, res) => {
 
         const result = MonteCarlo.runFromTradeData(closed, { numSimulations: 1000, tradesPerRun: 30 });
         global._monteCarloResult = result;
-        res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: true, source: 'equityCurve', simulations: result.simulations, result }));
+        res.json({ success: true, source: 'equityCurve', simulations: result.simulations, result });
         return;
     }
 
@@ -2376,7 +2373,7 @@ const server = http.createServer(async (req, res) => {
                 });
                 comparison.sort((a, b) => a.avgRank - b.avgRank);
 
-                res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ comparison, timestamp: new Date().toISOString() }));
+                res.json({ comparison, timestamp: new Date().toISOString() });
             })
             .catch(e => {
                 res.statusCode = 500;
@@ -2416,16 +2413,15 @@ const server = http.createServer(async (req, res) => {
                 maxHoldTime,
                 initialBalance: capital
             });
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
+            res.json({
                 strategy: 'scalping',
                 pair,
                 interval,
                 params: { profitTarget, stopLoss, minVolume, momentumThreshold, maxHoldTime, initialBalance: capital },
                 ...result
-            }));
+            });
         }).catch(e => {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.statusCode = 500;
             res.end(JSON.stringify({ error: e.message }));
         });
         return;
@@ -2501,7 +2497,7 @@ const server = http.createServer(async (req, res) => {
                     equityCurve: r.equityCurve
                 };
             });
-            res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ chartData }));
+            res.json({ chartData });
         }).catch(e => { res.statusCode = 500; res.end(JSON.stringify({ error: e.message })); });
         return;
     }
@@ -2511,8 +2507,7 @@ const server = http.createServer(async (req, res) => {
     // GET /api/attribution - P&L attribution breakdown
     if (url === '/api/attribution') {
         const attribution = calculateAttribution({ minTrades: 1 });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(attribution));
+        res.json(attribution);
         return;
     }
     
@@ -2525,16 +2520,14 @@ const server = http.createServer(async (req, res) => {
             const filter = {};
             if (query.get('strategy')) filter.strategy = query.get('strategy');
             if (query.get('isPaper')) filter.isPaper = query.get('isPaper') === 'true';
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(tradeJournal.getStats(filter)));
+            res.json(tradeJournal.getStats(filter));
             return;
         }
         
         if (url.startsWith('/api/trade-journal/detail/')) {
             const id = parseInt(url.split('/').pop());
             const trade = tradeJournal.trades.find(t => t.id === id);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(trade || { error: 'Trade not found' }));
+            res.json(trade || { error: 'Trade not found' });
             return;
         }
         
@@ -2546,8 +2539,7 @@ const server = http.createServer(async (req, res) => {
         if (query.get('direction')) filter.direction = query.get('direction');
         if (query.get('minPnl')) filter.minPnl = parseFloat(query.get('minPnl'));
         if (query.get('maxPnl')) filter.maxPnl = parseFloat(query.get('maxPnl'));
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(tradeJournal.listTrades(page, limit, filter)));
+        res.json(tradeJournal.listTrades(page, limit, filter));
         return;
     }
 
@@ -2558,7 +2550,7 @@ const server = http.createServer(async (req, res) => {
         const fs = require('fs');
         if (!fs.existsSync(exportDir)) fs.mkdirSync(exportDir, { recursive: true });
         const filePath = exportJournal(exportDir);
-        res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: true, file: filePath }));
+        res.json({ success: true, file: filePath });
         return;
     }
     

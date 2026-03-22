@@ -9,6 +9,10 @@ const https = require('https');
 const PORT = 3000;
 const HOST = '0.0.0.0';
 
+// Trailing stop defaults
+const TRAILING_ACTIVATION = 1.0; // % profit before trailing activates
+const TRAILING_DISTANCE = 0.75; // % below peak price for trailing SL
+
 // Trade Journal
 const tradeJournal = require('../src/tradeJournal');
 

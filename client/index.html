@@ -392,8 +392,10 @@ input[type="number"] {
 <canvas id="episodeChart"></canvas>
 </div>
 <div style="display:flex;gap:16px;margin-top:12px;font-size:.7rem">
-<span style="color:var(--green)">● BUY</span>
-<span style="color:var(--red)">● SELL</span>
+<span style="color:var(--green)">▲ BUY</span>
+<span style="color:var(--red)">▼ SELL</span>
+<span style="color:var(--red)">▼ SHORT</span>
+<span style="color:var(--green)">▲ COVER</span>
 <span style="color:var(--blue)">● Epsilon</span>
 <span id="equityLegend" style="color:var(--purple);display:none">● Equity %</span>
 </div>
@@ -1010,6 +1012,31 @@ function initChart(){
           type:'scatter'
         },
         {
+          label:'SHORT',
+          data:[],
+          borderColor:'#f85149',
+          backgroundColor:'#f85149',
+          pointStyle:'triangle',
+          pointRadius:8,
+          pointHoverRadius:10,
+          showLine:false,
+          rotation:180,
+          yAxisID:'y',
+          type:'scatter'
+        },
+        {
+          label:'COVER',
+          data:[],
+          borderColor:'#3fb950',
+          backgroundColor:'#3fb950',
+          pointStyle:'triangle',
+          pointRadius:8,
+          pointHoverRadius:10,
+          showLine:false,
+          yAxisID:'y',
+          type:'scatter'
+        },
+        {
           label:'Epsilon',
           data:[],
           borderColor:'#58a6ff',
@@ -1235,18 +1262,22 @@ async function updateChart(){
     const priceData=d.prices.map(p=>p.price);
     const buyData=d.trades.filter(t=>t.action==='BUY').map(t=>({x:t.step,y:t.price}));
     const sellData=d.trades.filter(t=>t.action==='SELL').map(t=>({x:t.step,y:t.price}));
+    const shortData=d.trades.filter(t=>t.action==='SHORT').map(t=>({x:t.step,y:t.price}));
+    const coverData=d.trades.filter(t=>t.action==='COVER').map(t=>({x:t.step,y:t.price}));
     const epsData=d.epsilons.map(e=>({x:e.step,y:e.epsilon}));
     chart.data.labels=labels;
     chart.data.datasets[0].data=priceData;
     chart.data.datasets[1].data=buyData;
     chart.data.datasets[2].data=sellData;
-    chart.data.datasets[3].data=epsData;
-    chart.data.datasets[4].data=[];
+    chart.data.datasets[3].data=shortData;
+    chart.data.datasets[4].data=coverData;
+    chart.data.datasets[5].data=epsData;
+    chart.data.datasets[6].data=[];
     if(d.equity&&d.equity.length>0){
       const baseEquity=episodeStartEquity||1000;
       const equityData=d.equity.map(e=>({x:e.step,y:((e.equity-baseEquity)/baseEquity)*100}));
-      chart.data.datasets[4].data=equityData;
-      chart.data.datasets[4]._metric='equity';
+      chart.data.datasets[6].data=equityData;
+      chart.data.datasets[6]._metric='equity';
       chart.options.scales.y3.display=true;
       chart.options.scales.y3.min=Math.min(...equityData.map(e=>e.y))-1;
       chart.options.scales.y3.max=Math.max(...equityData.map(e=>e.y))+1;

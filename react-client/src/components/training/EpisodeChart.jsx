@@ -5,33 +5,39 @@ import { endpoints } from '../../api/client';
 import { Card, LoadingSpinner } from '../common';
 
 /**
- * Convert raw tick data (each tick = single-price candle) into proper OHLC candles
- * grouped by second. Each group: open=first price, close=last, high=max, low=min.
+ * Convert raw tick data into proper OHLC candles grouped by tick count.
+ * With 100ms tick interval, grouping by second gives one-tick-per-second
+ * (open=high=low=close → zero body). Tick-count grouping fixes this.
+ *
+ * NOTE: Agent consistently selling (no BUY) is a DQN model issue, not a chart bug.
+ *
+ * @param {Array} ticks - raw tick array [{time, price, action, ...}]
+ * @param {number} ticksPerCandle - how many ticks form one candle (default 10)
  */
-function ticksToCandles(ticks) {
+function ticksToCandles(ticks, ticksPerCandle = 10) {
   if (!ticks?.length) return [];
-  const grouped = {};
-  for (const t of ticks) {
-    if (!grouped[t.time]) grouped[t.time] = { prices: [], actions: [] };
-    // Backend sends {time, open, high, low, close, action} — all OHLC = price
-    grouped[t.time].prices.push(t.close ?? t.price ?? t.open);
-    grouped[t.time].actions.push(t.action);
+  const candles = [];
+  for (let i = 0; i < ticks.length; i += ticksPerCandle) {
+    const group = ticks.slice(i, i + ticksPerCandle);
+    if (group.length === 0) continue;
+    const prices = group
+      .map(t => t.close ?? t.price ?? t.open)
+      .filter(p => p > 0);
+    if (prices.length === 0) continue;
+
+    // Prefer trade action over HOLD
+    const actions = group.map(t => t.action).filter(a => a && a !== 'HOLD');
+
+    candles.push({
+      time: group[0].time,
+      open: prices[0],
+      high: Math.max(...prices),
+      low: Math.min(...prices),
+      close: prices[prices.length - 1],
+      action: actions.length > 0 ? actions[actions.length - 1] : 'HOLD',
+    });
   }
-  return Object.entries(grouped)
-    .map(([time, g]) => {
-      // Prefer actual trade action (BUY/SELL) over HOLD
-      const tradeAction = g.actions.find(a => a !== 'HOLD');
-      return {
-        time: Number(time),
-        open: g.prices[0],
-        high: Math.max(...g.prices),
-        low: Math.min(...g.prices),
-        close: g.prices[g.prices.length - 1],
-        action: tradeAction || 'HOLD',
-      };
-    })
-    .filter(c => c.open > 0)
-    .sort((a, b) => a.time - b.time);
+  return candles;
 }
 
 /**
@@ -180,8 +186,10 @@ export function EpisodeCharts() {
 
   const rawCurrent = data?.currentEp?.candles || [];
   const rawPrev = data?.prevEp?.candles || [];
-  const currentCandles = ticksToCandles(rawCurrent);
-  const prevCandles = ticksToCandles(rawPrev);
+  // currentEp (live): 5 ticków/świecę — szybsze odświeżanie
+  // prevEp (zakończony): 10 ticków/świecę — lepszy overview
+  const currentCandles = ticksToCandles(rawCurrent, 5);
+  const prevCandles = ticksToCandles(rawPrev, 10);
 
   const prevSubtitle = prevCandles.length > 0
     ? `Poprzedni epizod (${prevCandles.length} świec)`

@@ -1697,6 +1697,120 @@ const server = http.createServer(async (req, res) => {
         return;
     }
     
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RISK/REWARD RATIO STATS
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    // Helper: calculate R/R for a position
+    function calcRR(entry, sl, tp, side) {
+        if (!entry || !sl || !tp) return null;
+        if (side === 'SHORT') {
+            // For shorts: SL is above entry, TP is below entry
+            const risk = Math.abs(entry - sl) / entry;
+            const reward = Math.abs(tp - entry) / entry;
+            return risk > 0 ? reward / risk : null;
+        } else {
+            // For longs: SL is below entry, TP is above entry
+            const risk = Math.abs(entry - sl) / entry;
+            const reward = Math.abs(tp - entry) / entry;
+            return risk > 0 ? reward / risk : null;
+        }
+    }
+    
+    // GET /api/risk-reward/stats - Risk/Reward statistics
+    if (url === '/api/risk-reward/stats') {
+        // --- Open positions from multi-asset paper trading ---
+        const openPositions = [];
+        for (const asset of REBALANCE_ASSETS) {
+            const pos = paperMultiPositions[asset];
+            if (pos && prices[asset.toLowerCase()] > 0) {
+                const rr = calcRR(pos.entryPrice, pos.stopLoss, pos.takeProfit, pos.side);
+                openPositions.push({
+                    symbol: asset,
+                    side: pos.side,
+                    entry: pos.entryPrice,
+                    sl: pos.stopLoss,
+                    tp: pos.takeProfit,
+                    rr: rr !== null ? Math.round(rr * 100) / 100 : null
+                });
+            }
+        }
+        // Also legacy single-asset position
+        if (paperOpenPosition && prices.btc > 0) {
+            const pos = paperOpenPosition;
+            const rr = calcRR(pos.entryPrice, pos.stopLoss, pos.takeProfit, pos.side);
+            const existing = openPositions.find(p => p.symbol === 'BTC');
+            if (!existing) {
+                openPositions.push({
+                    symbol: 'BTC',
+                    side: pos.side,
+                    entry: pos.entryPrice,
+                    sl: pos.stopLoss,
+                    tp: pos.takeProfit,
+                    rr: rr !== null ? Math.round(rr * 100) / 100 : null
+                });
+            }
+        }
+        
+        // --- Historical R/R from closed trades ---
+        const allClosed = paperTrading.closedTrades;
+        const closedWithRR = [];
+        for (const t of allClosed) {
+            // Use stored sl/tp if available, otherwise try to reconstruct from % SL/TP
+            let entry = t.entryPrice;
+            let sl = t.stopLoss;
+            let tp = t.takeProfit;
+            let side = t.side;
+            
+            if (!sl || !tp) {
+                // Reconstruct from closed trade pnl - try side+pnl to infer
+                // We don't have exact SL/TP for trades without them stored
+                // Only include trades where we have explicit SL/TP
+                continue;
+            }
+            if (!entry || !side) continue;
+            
+            const rr = calcRR(entry, sl, tp, side);
+            if (rr !== null) {
+                closedWithRR.push({ ...t, rr });
+            }
+        }
+        
+        // Compute stats from closed trades
+        let averageRR = null, bestRR = null, worstRR = null;
+        if (closedWithRR.length > 0) {
+            const rrs = closedWithRR.map(t => t.rr);
+            averageRR = Math.round((rrs.reduce((a, b) => a + b, 0) / rrs.length) * 100) / 100;
+            bestRR = Math.round(Math.max(...rrs) * 100) / 100;
+            worstRR = Math.round(Math.min(...rrs) * 100) / 100;
+        }
+        
+        // Win rate by R/R bucket
+        const winRateByRR = { gt2: null, gt1: null, lt1: null };
+        const buckets = { gt2: { wins: 0, total: 0 }, gt1: { wins: 0, total: 0 }, lt1: { wins: 0, total: 0 } };
+        for (const t of closedWithRR) {
+            let bucket;
+            if (t.rr > 2) bucket = 'gt2';
+            else if (t.rr >= 1) bucket = 'gt1';
+            else bucket = 'lt1';
+            buckets[bucket].total++;
+            if (t.pnl > 0) buckets[bucket].wins++;
+        }
+        for (const [key, val] of Object.entries(buckets)) {
+            winRateByRR[key] = val.total > 0 ? Math.round((val.wins / val.total) * 100) / 100 : null;
+        }
+        
+        res.json({
+            openPositions,
+            averageRR,
+            bestRR,
+            worstRR,
+            winRateByRR,
+            closedWithRRCount: closedWithRR.length
+        });
+        return;
+    }
+    
     // Paper trading equity curve
     if (url === '/api/paper-trading/equity-curve') {
         res.end(JSON.stringify(paperEquityCurve));

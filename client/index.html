@@ -566,6 +566,50 @@ Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
 </div>
 </div>
 </div>
+<!-- Risk/Reward Ratio Card -->
+<div class="card" style="margin-top:16px">
+<div class="card-header">⚖️ Risk / Reward</div>
+<div class="card-body">
+<div id="rrLoading" style="text-align:center;color:var(--text2);font-size:.7rem;padding:8px">Loading R/R data...</div>
+<div id="rrContent" style="display:none">
+<div class="metrics-grid" style="grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+<div class="metric-box">
+<div class="metric-label">Avg R/R</div>
+<div class="metric-value green" id="rrAvg">--</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Best</div>
+<div class="metric-value" id="rrBest">--</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Worst</div>
+<div class="metric-value red" id="rrWorst">--</div>
+</div>
+</div>
+<div style="margin-bottom:10px">
+<div style="display:flex;gap:8px;margin-bottom:8px;font-size:.65rem">
+<div style="flex:1;text-align:center;padding:6px 4px;border-radius:6px;background:var(--bg3)">
+<div style="color:var(--text2);margin-bottom:2px">R/R &gt; 2</div>
+<div style="font-weight:700;color:#4ade80" id="rrGt2">--</div>
+</div>
+<div style="flex:1;text-align:center;padding:6px 4px;border-radius:6px;background:var(--bg3)">
+<div style="color:var(--text2);margin-bottom:2px">R/R 1-2</div>
+<div style="font-weight:700;color:#fbbf24" id="rrGt1">--</div>
+</div>
+<div style="flex:1;text-align:center;padding:6px 4px;border-radius:6px;background:var(--bg3)">
+<div style="color:var(--text2);margin-bottom:2px">R/R &lt; 1</div>
+<div style="font-weight:700;color:#f87171" id="rrLt1">--</div>
+</div>
+</div>
+<div style="font-size:.6rem;color:var(--text2);text-align:center">Win Rate by R/R Bucket</div>
+</div>
+<div id="rrPositions" style="font-size:.7rem">
+<div style="font-weight:600;margin-bottom:6px;color:var(--text2)">Open Positions</div>
+<div id="rrPositionsList" style="display:flex;flex-direction:column;gap:4px"></div>
+</div>
+</div>
+</div>
+</div>
 <div class="card" style="margin-top:16px">
 <div class="card-header">📈 Trading</div>
 <div class="card-body">
@@ -1811,7 +1855,73 @@ async function updatePaper(){
     updatePerformance();
     updatePaperStatsFromJournal();
     updateRebalancerStatus();
+    updateRiskReward();
   } catch(e){}
+}
+
+async function updateRiskReward(){
+  try {
+    const d=await fetch('/api/risk-reward/stats').then(r=>r.json());
+    const loading=document.getElementById('rrLoading');
+    const content=document.getElementById('rrContent');
+    if(loading)loading.style.display='none';
+    if(content)content.style.display='block';
+    
+    const avg=d.averageRR;
+    const best=d.bestRR;
+    const worst=d.worstRR;
+    
+    const avgEl=document.getElementById('rrAvg');
+    if(avgEl) {
+      avgEl.textContent=avg!==null?avg:'N/A';
+      if(avg!==null) avgEl.className=avg>2?'metric-value green':avg>=1?'metric-value':'metric-value red';
+    }
+    
+    const bestEl=document.getElementById('rrBest');
+    if(bestEl) bestEl.textContent=best!==null?best:'N/A';
+    
+    const worstEl=document.getElementById('rrWorst');
+    if(worstEl) {
+      worstEl.textContent=worst!==null?worst:'N/A';
+      if(worst!==null) worstEl.className=worst>2?'metric-value':worst>=1?'metric-value':'metric-value red';
+    }
+    
+    // Win rate by bucket
+    const wr=d.winRateByRR||{};
+    const gt2El=document.getElementById('rrGt2');
+    if(gt2El) gt2El.textContent=wr.gt2!==null?(wr.gt2*100).toFixed(0)+'%':'--';
+    const gt1El=document.getElementById('rrGt1');
+    if(gt1El) gt1El.textContent=wr.gt1!==null?(wr.gt1*100).toFixed(0)+'%':'--';
+    const lt1El=document.getElementById('rrLt1');
+    if(lt1El) lt1El.textContent=wr.lt1!==null?(wr.lt1*100).toFixed(0)+'%':'--';
+    
+    // Open positions list
+    const positions=d.openPositions||[];
+    const listEl=document.getElementById('rrPositionsList');
+    if(listEl) {
+      if(positions.length===0) {
+        listEl.innerHTML='<div style="color:var(--text2);font-size:.65rem">No open positions</div>';
+      } else {
+        listEl.innerHTML=positions.map(p=>{
+          const rr=p.rr;
+          let badge='<span style="padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:700">';
+          let badgeColor;
+          if(rr===null) { badge+='N/A'; badgeColor='var(--text2)'; }
+          else if(rr>2) { badge+='GOOD'; badgeColor='#4ade80'; }
+          else if(rr>=1) { badge+='OK'; badgeColor='#fbbf24'; }
+          else { badge+='BAD'; badgeColor='#f87171'; }
+          badge+='</span>';
+          const risk=rr!==null&&p.entry?(Math.abs(p.entry-p.sl)/p.entry*100).toFixed(2)+'%':null;
+          const reward=rr!==null&&p.entry?(Math.abs(p.tp-p.entry)/p.entry*100).toFixed(2)+'%':null;
+          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;background:var(--bg3);border-radius:6px">
+            <span style="font-weight:600">${p.symbol}</span>
+            <span style="font-size:.65rem">R:${risk||'?'} / Rw:${reward||'?'}</span>
+            <span style="color:${badgeColor}">${badge} ${rr!==null?'('+rr+')':''}</span>
+          </div>`;
+        }).join('');
+      }
+    }
+  } catch(e){ console.error('R/R update error:',e); }
 }
 
 async function updateRebalancerStatus(){

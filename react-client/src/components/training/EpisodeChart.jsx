@@ -5,17 +5,33 @@ import { endpoints } from '../../api/client';
 import { Card, LoadingSpinner } from '../common';
 
 /**
- * Deduplicate candle timestamps (TradingView requires unique times).
- * If 2 ticks share the same second, shift later ones by +1s.
+ * Convert raw tick data (each tick = single-price candle) into proper OHLC candles
+ * grouped by second. Each group: open=first price, close=last, high=max, low=min.
  */
-function dedupeCandles(candles) {
-  const seen = new Set();
-  return candles.map(c => {
-    let t = c.time;
-    while (seen.has(t)) t++;
-    seen.add(t);
-    return { ...c, time: t };
-  });
+function ticksToCandles(ticks) {
+  if (!ticks?.length) return [];
+  const grouped = {};
+  for (const t of ticks) {
+    if (!grouped[t.time]) grouped[t.time] = { prices: [], actions: [] };
+    // Backend sends {time, open, high, low, close, action} — all OHLC = price
+    grouped[t.time].prices.push(t.close ?? t.price ?? t.open);
+    grouped[t.time].actions.push(t.action);
+  }
+  return Object.entries(grouped)
+    .map(([time, g]) => {
+      // Prefer actual trade action (BUY/SELL) over HOLD
+      const tradeAction = g.actions.find(a => a !== 'HOLD');
+      return {
+        time: Number(time),
+        open: g.prices[0],
+        high: Math.max(...g.prices),
+        low: Math.min(...g.prices),
+        close: g.prices[g.prices.length - 1],
+        action: tradeAction || 'HOLD',
+      };
+    })
+    .filter(c => c.open > 0)
+    .sort((a, b) => a.time - b.time);
 }
 
 /**
@@ -41,7 +57,7 @@ function extractMarkers(candles) {
 
 /**
  * Reusable CandlestickChart — renders one chart with candles + trade markers.
- * Candles come ready from backend (each tick = 1 OHLC candle).
+ * Candles come from ticksToCandles() grouped by second (OHLC).
  */
 const CandlestickChart = memo(function CandlestickChart({ title, subtitle, candles, height = 280 }) {
   const chartContainerRef = useRef(null);
@@ -102,10 +118,7 @@ const CandlestickChart = memo(function CandlestickChart({ title, subtitle, candl
       close: c.close,
     }));
 
-    // Deduplicate timestamps (TradingView requires unique times)
-    const uniqueCandles = dedupeCandles(formattedCandles);
-
-    candlestickSeries.setData(uniqueCandles);
+    candlestickSeries.setData(formattedCandles);
 
     // Markers from candle.action field
     const markers = extractMarkers(candles);
@@ -165,8 +178,10 @@ export function EpisodeCharts() {
     refetchInterval: 2000, // co 2s dla live
   });
 
-  const currentCandles = data?.currentEp?.candles || [];
-  const prevCandles = data?.prevEp?.candles || [];
+  const rawCurrent = data?.currentEp?.candles || [];
+  const rawPrev = data?.prevEp?.candles || [];
+  const currentCandles = ticksToCandles(rawCurrent);
+  const prevCandles = ticksToCandles(rawPrev);
 
   const prevSubtitle = prevCandles.length > 0
     ? `Poprzedni epizod (${prevCandles.length} świec)`

@@ -603,6 +603,38 @@ Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
 </div>
 </div>
 </div>
+<!-- Scalping Parameters (visible when scalping strategy selected) -->
+<div id="scalpParamsSection" style="display:none;margin-bottom:12px">
+<div style="font-size:.65rem;color:var(--text2);margin-bottom:8px;text-transform:uppercase">⚡ Scalping Trading</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Profit Target %</div>
+<input type="number" id="scalpProfitTarget" value="0.5" min="0.1" max="10" step="0.1" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--green);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+</div>
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Stop Loss %</div>
+<input type="number" id="scalpStopLoss" value="0.3" min="0.1" max="5" step="0.1" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--red);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+</div>
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Min Volume (xavg)</div>
+<input type="number" id="scalpMinVolume" value="1.5" min="1" max="5" step="0.1" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Momentum</div>
+<input type="number" id="scalpMomentum" value="60" min="0" max="100" step="5" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+</div>
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Max Hold (sec)</div>
+<input type="number" id="scalpMaxHold" value="900" min="60" max="3600" step="60" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+</div>
+<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+<div style="font-size:.6rem;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Timeframe (sec)</div>
+<input type="number" id="scalpTimeframe" value="60" min="15" max="300" step="15" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:.8rem;font-weight:600">
+</div>
+</div>
+</div>
 <!-- Grid Trading Parameters (visible when grid strategy selected) -->
 <div id="gridParamsSection" style="display:none;margin-bottom:12px">
 <div style="font-size:.65rem;color:var(--text2);margin-bottom:8px;text-transform:uppercase">🔲 Grid Trading</div>
@@ -640,6 +672,15 @@ Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
 <div class="metric-box">
 <div class="metric-label">P&L</div>
 <div class="metric-value" id="paperPnl">$0</div>
+</div>
+</div>
+<div id="paperJournalStats" style="margin-top:8px;padding:8px;background:rgba(99,102,241,0.1);border-radius:8px;font-size:.6rem;display:none">
+<div style="font-weight:600;margin-bottom:4px;color:var(--accent)">📓 Journal Stats</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
+<div>Trades: <span id="pjTrades" class="metric-value" style="font-size:.65rem">0</span></div>
+<div>Win%: <span id="pjWinRate" class="metric-value pos" style="font-size:.65rem">0%</span></div>
+<div>P&L%: <span id="pjPnl" class="metric-value" style="font-size:.65rem">0%</span></div>
+<div>Best: <span id="pjBest" class="metric-value pos" style="font-size:.65rem">0%</span></div>
 </div>
 </div>
 <div style="display:flex;gap:8px;margin-top:12px">
@@ -707,6 +748,48 @@ Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
 </div>
 </div>
 </div>
+</div>
+</div>
+<!-- Trade Journal Card -->
+<div class="card" style="margin-top:16px" id="tradeJournalCard">
+<div class="card-header">📖 Trade Journal <button onclick="toggleJournal()" style="margin-left:auto;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px;font-size:.6rem;cursor:pointer">📜</button></div>
+<div class="card-body" id="journalBody" style="display:none">
+<div id="journalStatsGrid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+<div class="metric-box">
+<div class="metric-label">Total Trades</div>
+<div class="metric-value" id="journalTotalTrades">0</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Win Rate</div>
+<div class="metric-value green" id="journalWinRate">0%</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Avg P&L</div>
+<div class="metric-value" id="journalAvgPnl">0%</div>
+</div>
+</div>
+<div id="journalStatsGrid2" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+<div class="metric-box">
+<div class="metric-label">Best Trade</div>
+<div class="metric-value green" id="journalBestTrade">--</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Worst Trade</div>
+<div class="metric-value red" id="journalWorstTrade">--</div>
+</div>
+<div class="metric-box">
+<div class="metric-label">Profit Factor</div>
+<div class="metric-value blue" id="journalProfitFactor">--</div>
+</div>
+</div>
+<div style="margin-bottom:8px">
+<select id="journalFilter" onchange="updateJournal()" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:6px;font-size:.65rem;width:100%">
+<option value="">All Trades</option>
+<option value="paper">Paper Only</option>
+<option value="live">Live Only</option>
+</select>
+</div>
+<div id="journalTradesList" style="max-height:200px;overflow-y:auto;font-size:.65rem"></div>
 </div>
 </div>
 <!-- Live Trading Card -->
@@ -1346,6 +1429,11 @@ document.getElementById('paperStrategy').onchange=async function(){
   if (gridSection) {
     gridSection.style.display = this.value === 'grid' ? 'block' : 'none';
   }
+  // Toggle scalp params visibility
+  const scalpSection = document.getElementById('scalpParamsSection');
+  if (scalpSection) {
+    scalpSection.style.display = this.value === 'scalping' ? 'block' : 'none';
+  }
 };
 let sltpTimeout=null;
 async function saveSLTP(){
@@ -1375,6 +1463,28 @@ async function saveGridParams(){
 document.getElementById('gridSize')?.addEventListener('change', saveGridParams);
 document.getElementById('gridCount')?.addEventListener('change', saveGridParams);
 document.getElementById('gridSpacing')?.addEventListener('change', saveGridParams);
+
+// Scalp params saving
+let scalpParamsTimeout=null;
+async function saveScalpParams(){
+  clearTimeout(scalpParamsTimeout);
+  scalpParamsTimeout=setTimeout(async()=>{
+    const profitTarget=document.getElementById('scalpProfitTarget').value;
+    const stopLoss=document.getElementById('scalpStopLoss').value;
+    const minVolume=document.getElementById('scalpMinVolume').value;
+    const momentum=document.getElementById('scalpMomentum').value;
+    const maxHold=document.getElementById('scalpMaxHold').value;
+    const timeframe=document.getElementById('scalpTimeframe').value;
+    await fetch('/api/paper-trading/scalp-params?profitTarget='+profitTarget+'&stopLoss='+stopLoss+'&minVolume='+minVolume+'&momentum='+momentum+'&maxHold='+maxHold+'&timeframe='+timeframe).then(x=>x.json());
+    log('Scalp: TP='+profitTarget+'% SL='+stopLoss+'% vol='+minVolume+'x mom='+momentum,'system');
+  },500);
+}
+document.getElementById('scalpProfitTarget')?.addEventListener('change', saveScalpParams);
+document.getElementById('scalpStopLoss')?.addEventListener('change', saveScalpParams);
+document.getElementById('scalpMinVolume')?.addEventListener('change', saveScalpParams);
+document.getElementById('scalpMomentum')?.addEventListener('change', saveScalpParams);
+document.getElementById('scalpMaxHold')?.addEventListener('change', saveScalpParams);
+document.getElementById('scalpTimeframe')?.addEventListener('change', saveScalpParams);
 
 async function updatePaper(){
   try {

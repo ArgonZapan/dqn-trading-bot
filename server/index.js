@@ -9,6 +9,9 @@ const https = require('https');
 const PORT = 3000;
 const HOST = '0.0.0.0';
 
+// Trade Journal
+const tradeJournal = require('../src/tradeJournal');
+
 // State
 let prices = { btc: 0, eth: 0, sol: 0 };
 let portfolio = { usdt: 1000, btc: 0, eth: 0, sol: 0 };
@@ -814,6 +817,22 @@ async function paperTradingStep() {
             paperLog('CLOSE', closed.side, '| Exit:', '$' + currentPrice.toLocaleString(), '| P&L: $' + netPnl.toFixed(2), '| Reason: SIGNAL');
         }
         updatePaperStats();
+        // Record in Trade Journal
+        const entry = tradeJournal.addTrade({
+            entryTime: new Date(closed.entryTime).toISOString(),
+            exitTime: new Date().toISOString(),
+            symbol: 'BTCUSDT',
+            direction: closed.side,
+            strategy: paperStrategy,
+            entryPrice: closed.entryPrice,
+            exitPrice: closed.exitPrice,
+            quantity: closed.quantity,
+            pnlPercent: closed.pnlPct,
+            pnlAbsolute: closed.pnl,
+            commission: closed.fee,
+            exitReason: closed.exitReason,
+            isPaper: true
+        });
         // Trade close alert with P&L
         getAlerter().tradeAlert(closed.side === 'LONG' ? 'SELL' : 'BUY', currentPrice, closed.quantity, closed.pnl, paperPositionSize * 100).catch(() => {});
         // Profit/loss threshold alerts
@@ -1032,6 +1051,23 @@ const server = http.createServer(async (req, res) => {
                     paperTrading.capital += netPnl;
                 }
                 paperLog('Position closed on disable: ' + paperOpenPosition.side + ' | P&L: $' + netPnl.toFixed(2) + ' | Reason: MANUAL_CLOSE');
+                // Record in Trade Journal (before clearing position)
+                const closedEntry = {
+                    entryTime: new Date(paperOpenPosition.entryTime).toISOString(),
+                    exitTime: new Date().toISOString(),
+                    symbol: 'BTCUSDT',
+                    direction: paperOpenPosition.side,
+                    strategy: paperStrategy,
+                    entryPrice: paperOpenPosition.entryPrice,
+                    exitPrice: currentPrice,
+                    quantity: paperOpenPosition.quantity,
+                    pnlPercent: ((currentPrice - paperOpenPosition.entryPrice) / paperOpenPosition.entryPrice) * 100 * (paperOpenPosition.side === 'SHORT' ? -1 : 1),
+                    pnlAbsolute: netPnl,
+                    commission: paperOpenPosition.fee + exitFee,
+                    exitReason: 'MANUAL_CLOSE',
+                    isPaper: true
+                };
+                tradeJournal.addTrade(closedEntry);
                 paperOpenPosition = null;
                 paperTrading.positions = [];
             }
@@ -1172,7 +1208,57 @@ const server = http.createServer(async (req, res) => {
     if (url === '/api/paper-trading/clear-history') {
         paperTrading.closedTrades = [];
         updatePaperStats();
+        // Also clear paper trades from journal
+        if (tradeJournal && tradeJournal.trades) {
+            tradeJournal.trades = tradeJournal.trades.filter(t => !t.isPaper);
+            tradeJournal.save();
+        }
         res.end(JSON.stringify({ success: true }));
+        return;
+    }
+    
+    // GET /api/paper-trading/trades - returns last N paper trades from journal
+    if (url === '/api/paper-trading/trades') {
+        try {
+            const result = tradeJournal.listTrades(1, 50, { isPaper: true });
+            res.json(result);
+        } catch(e) {
+            res.json({ items: [], total: 0, error: e.message });
+        }
+        return;
+    }
+    
+    // ─── Trade Journal ─────────────────────────────────────────────────────────
+    
+    // GET /api/trade-journal - list trades with pagination
+    if (url.startsWith('/api/trade-journal')) {
+        const urlParts = url.split('?');
+        const query = new URLSearchParams(urlParts[1] || '');
+        
+        if (url === '/api/trade-journal/stats') {
+            const filter = {};
+            if (query.get('strategy')) filter.strategy = query.get('strategy');
+            if (query.get('isPaper')) filter.isPaper = query.get('isPaper') === 'true';
+            res.json(tradeJournal.getStats(filter));
+            return;
+        }
+        
+        if (url.startsWith('/api/trade-journal/detail/')) {
+            const id = parseInt(url.split('/').pop());
+            const trade = tradeJournal.trades.find(t => t.id === id);
+            res.json(trade || { error: 'Trade not found' });
+            return;
+        }
+        
+        const page = parseInt(query.get('page')) || 1;
+        const limit = parseInt(query.get('limit')) || 20;
+        const filter = {};
+        if (query.get('strategy')) filter.strategy = query.get('strategy');
+        if (query.get('isPaper')) filter.isPaper = query.get('isPaper') === 'true';
+        if (query.get('direction')) filter.direction = query.get('direction');
+        if (query.get('minPnl')) filter.minPnl = parseFloat(query.get('minPnl'));
+        if (query.get('maxPnl')) filter.maxPnl = parseFloat(query.get('maxPnl'));
+        res.json(tradeJournal.listTrades(page, limit, filter));
         return;
     }
     
@@ -1364,6 +1450,22 @@ const server = http.createServer(async (req, res) => {
         const trade = await lt.closeLong('MANUAL');
         if (trade) {
             liveLog(`CLOSE LONG: P&L $${(trade.pnl || 0).toFixed(2)} @ $${trade.price.toLocaleString()}`);
+            // Record in Trade Journal
+            tradeJournal.addTrade({
+                entryTime: new Date(trade.entryTime || Date.now() - 60000).toISOString(),
+                exitTime: new Date().toISOString(),
+                symbol: 'BTCUSDT',
+                direction: 'LONG',
+                strategy: 'live',
+                entryPrice: trade.entryPrice,
+                exitPrice: trade.price,
+                quantity: trade.quantity,
+                pnlPercent: trade.pnlPercent || 0,
+                pnlAbsolute: trade.pnl || 0,
+                commission: trade.commission || 0,
+                exitReason: 'MANUAL_CLOSE',
+                isPaper: false
+            });
             const n = getNotifier();
             if (n) n.send(`📕 <b>Live LONG Closed</b>\nExit: <code>$${trade.price.toLocaleString()}</code>\nP&L: <code>${(trade.pnl || 0) >= 0 ? '+' : ''}$${(trade.pnl || 0).toFixed(2)}</code>`);
             res.end(JSON.stringify({ success: true, trade }));
@@ -1411,6 +1513,22 @@ const server = http.createServer(async (req, res) => {
         const trade = await lt.closeShort('MANUAL');
         if (trade) {
             liveLog(`CLOSE SHORT: P&L $${(trade.pnl || 0).toFixed(2)} @ $${trade.price.toLocaleString()}`);
+            // Record in Trade Journal
+            tradeJournal.addTrade({
+                entryTime: new Date(trade.entryTime || Date.now() - 60000).toISOString(),
+                exitTime: new Date().toISOString(),
+                symbol: 'BTCUSDT',
+                direction: 'SHORT',
+                strategy: 'live',
+                entryPrice: trade.entryPrice,
+                exitPrice: trade.price,
+                quantity: trade.quantity,
+                pnlPercent: trade.pnlPercent || 0,
+                pnlAbsolute: trade.pnl || 0,
+                commission: trade.commission || 0,
+                exitReason: 'MANUAL_CLOSE',
+                isPaper: false
+            });
             const n = getNotifier();
             if (n) n.send(`📗 <b>Live SHORT Closed</b>\nExit: <code>$${trade.price.toLocaleString()}</code>\nP&L: <code>${(trade.pnl || 0) >= 0 ? '+' : ''}$${(trade.pnl || 0).toFixed(2)}</code>`);
             res.end(JSON.stringify({ success: true, trade }));

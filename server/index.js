@@ -1251,13 +1251,14 @@ const server = http.createServer(async (req, res) => {
     }
     
     if (url === '/api/episode-data') {
-        // Build OHLCV candles from episode prices (group by 1-min buckets)
+        // Build OHLCV candles from episode prices (group by 5-second buckets)
         let candles = [];
         if (currentEpisodeSteps.length > 0) {
+            const bucketSize = 5; // seconds
             const buckets = {};
             for (const p of currentEpisodeSteps) {
                 const t = p.time || Date.now();
-                const bucketKey = Math.floor(t / 60000) * 60; // Unix seconds, 1-min bucket
+                const bucketKey = Math.floor(t / (bucketSize * 1000)) * bucketSize; // Unix seconds, 5s bucket
                 if (!buckets[bucketKey]) {
                     buckets[bucketKey] = { time: bucketKey, open: p.price, high: p.price, low: p.price, close: p.price };
                 } else {

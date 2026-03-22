@@ -986,6 +986,25 @@ const server = http.createServer(async (req, res) => {
                 pnl: netPnl,
                 timestamp: Date.now()
             });
+            // Record in Trade Journal
+            try {
+                tradeJournal.addTrade({
+                    id: paperOpenPosition.id,
+                    symbol: 'BTCUSDT',
+                    direction: 'LONG',
+                    strategy: paperStrategy,
+                    entryPrice: paperOpenPosition.entryPrice,
+                    exitPrice: currentPrice,
+                    quantity: paperOpenPosition.quantity,
+                    pnlPercent: ((currentPrice - paperOpenPosition.entryPrice) / paperOpenPosition.entryPrice) * 100,
+                    pnlAbsolute: netPnl,
+                    commission: paperOpenPosition.fee + exitFee,
+                    exitReason: 'STOP_API',
+                    entryTime: paperOpenPosition.entryTime,
+                    exitTime: new Date().toISOString(),
+                    isPaper: true
+                });
+            } catch(e) {}
             paperOpenPosition = null;
             paperTrading.positions = [];
         }

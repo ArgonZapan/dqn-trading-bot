@@ -1516,6 +1516,26 @@ async function updatePaper(){
       }
     }
     updatePerformance();
+    updatePaperStatsFromJournal();
+  } catch(e){}
+}
+
+async function updatePaperStatsFromJournal(){
+  try {
+    const r=await fetch('/api/paper-trading/trades').then(x=>x.json());
+    const el=document.getElementById('paperJournalStats');
+    if(!el)return;
+    const items=r.items||[];
+    if(items.length===0){el.style.display='none';return;}
+    el.style.display='block';
+    document.getElementById('pjTrades').textContent=items.length;
+    const wins=items.filter(t=>t.pnlPercent>0).length;
+    const wr=items.length>0?(wins/items.length*100).toFixed(0)+'%':'>0%';
+    document.getElementById('pjWinRate').textContent=wr;
+    const totalPnl=items.reduce((a,t)=>a+(t.pnlPercent||0),0);
+    document.getElementById('pjPnl').textContent=(totalPnl>=0?'+':'')+totalPnl.toFixed(1)+'%';
+    const best=items.reduce((max,t)=>Math.max(max,t.pnlPercent||0),0);
+    document.getElementById('pjBest').textContent=(best>=0?'+':'')+best.toFixed(1)+'%';
   } catch(e){}
 }
 

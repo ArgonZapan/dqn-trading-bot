@@ -3866,7 +3866,8 @@ function switchSection(section) {
     item.classList.toggle('active', item.dataset.section === section);
   });
   document.querySelectorAll('.tab-section').forEach(tab => {
-    tab.style.display = (tab.dataset.tab === section) ? 'block' : 'none';
+    const tabName = tab.id.replace('tab-', '');
+    tab.style.display = (tabName === section) ? 'block' : 'none';
   });
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (section === 'analytics') { loadMonteCarlo && loadMonteCarlo(); }

@@ -1663,6 +1663,249 @@ const server = http.createServer(async (req, res) => {
         res.end(csv);
         return;
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STRATEGY COMPARISON — backtest all strategies on recent data
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    if (url === '/api/strategy/compare') {
+        const binance = require('../src/services/BinanceClient');
+        const client = new binance();
+        const { trendFollowing, meanReversion, momentum, macdCrossover } = require('../src/strategies');
+        const { ScalpingStrategy } = require('../src/strategies/scalpingStrategy');
+        const { GridStrategy } = require('../src/strategies/gridStrategy');
+
+        const STRATS = [
+            { id: 'trend',        name: '📈 Trend',        fn: (env) => trendFollowing(env, null) },
+            { id: 'mean_reversion',name: '↔️ Mean Rev',    fn: (env) => meanReversion(env) },
+            { id: 'momentum',      name: '💨 Momentum',    fn: (env) => momentum(env, null) },
+            { id: 'macd',          name: '〰️ MACD',        fn: (env) => macdCrossover(env, null) },
+            { id: 'scalping',      name: '⚡ Scalping',    fn: (env) => new ScalpingStrategy().decide(env.getState(), env) },
+            { id: 'grid',          name: '🔲 Grid',        fn: (env) => new GridStrategy().decide(env.getState(), env) },
+        ];
+
+        const CANDLES = 300;   // lookback window
+        const CAPITAL = 1000;
+        const FEE = 0.001;
+
+        async function runBacktest(strategyFn, pair = 'BTCUSDT', interval = '5m') {
+            try {
+                const klines = await client.getKlines(pair, interval, CANDLES);
+                if (!klines || klines.length < 50) return null;
+
+                const env = new (require('../src/environment'))(pair, 30);
+                env.reset(klines);
+                let pos = 0, entry = 0, btc = 0, cash = CAPITAL;
+                const trades = [];
+
+                while (true) {
+                    const action = strategyFn(env);
+                    const price = klines[env.step]?.close || 0;
+                    if (!price) break;
+
+                    if (action === 1 && pos === 0) {
+                        btc = (cash * 0.95) / price;
+                        cash = cash * 0.95 - btc * price * FEE;
+                        pos = 1; entry = price;
+                    } else if (action === 2 && pos === 1) {
+                        const pnl = (price - entry) * btc - price * btc * FEE;
+                        cash += pnl + btc * price * (1 - FEE);
+                        trades.push({ pnl, side: 'LONG' });
+                        btc = 0; pos = 0;
+                    }
+
+                    env.step++;
+                    if (env.step >= klines.length - 1) break;
+                }
+
+                // Close open position
+                if (pos === 1) {
+                    const price = klines[klines.length - 1].close;
+                    const pnl = (price - entry) * btc - price * btc * FEE;
+                    cash += pnl + btc * price * (1 - FEE);
+                    trades.push({ pnl, side: 'LONG' });
+                }
+
+                const finalEquity = cash;
+                const totalPnl = finalEquity - CAPITAL;
+                const pnlPct = (totalPnl / CAPITAL) * 100;
+                const wins = trades.filter(t => t.pnl > 0);
+                const losses = trades.filter(t => t.pnl <= 0);
+                const winRate = trades.length > 0 ? wins.length / trades.length : 0;
+
+                // Equity curve
+                let equity = CAPITAL, peak = CAPITAL, maxDD = 0, maxDDPct = 0;
+                const equityCurve = [];
+                for (const t of trades) {
+                    equity += t.pnl;
+                    equityCurve.push(equity);
+                    if (equity > peak) peak = equity;
+                    const dd = peak - equity;
+                    const ddPct = peak > 0 ? dd / peak * 100 : 0;
+                    if (dd > maxDD) { maxDD = dd; maxDDPct = ddPct; }
+                }
+
+                // Sharpe (simplified)
+                const returns = trades.map(t => t.pnl / CAPITAL);
+                const avgR = returns.length ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
+                const stdR = returns.length > 1
+                    ? Math.sqrt(returns.reduce((s, r) => s + Math.pow(r - avgR, 2), 0) / (returns.length - 1)) : 0;
+                const sharpe = stdR > 0 ? (avgR * Math.sqrt(252)) / stdR : 0;
+
+                const grossWin = wins.reduce((s, t) => s + t.pnl, 0);
+                const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+                const pf = grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? 99 : 0;
+
+                return {
+                    totalTrades: trades.length,
+                    winningTrades: wins.length,
+                    losingTrades: losses.length,
+                    winRate: winRate * 100,
+                    totalPnl: finalEquity - CAPITAL,
+                    totalPnlPercent: pnlPct,
+                    finalEquity,
+                    maxDrawdown: maxDD,
+                    maxDrawdownPercent: maxDDPct,
+                    sharpeRatio: sharpe,
+                    profitFactor: pf,
+                    avgWin: wins.length ? grossWin / wins.length : 0,
+                    avgLoss: losses.length ? grossLoss / losses.length : 0,
+                    equityCurve
+                };
+            } catch (e) {
+                console.error(`[StrategyCompare] ${strategyFn._name || 'unknown'}:`, e.message);
+                return null;
+            }
+        }
+
+        // Run all strategies in parallel
+        Promise.all(STRATS.map(s => runBacktest(s.fn)))
+            .then(results => {
+                const comparison = STRATS.map((s, i) => ({
+                    strategyId: s.id,
+                    strategyName: s.name,
+                    ...(results[i] || {
+                        totalTrades: 0, winningTrades: 0, losingTrades: 0,
+                        winRate: 0, totalPnl: 0, totalPnlPercent: 0,
+                        finalEquity: CAPITAL, maxDrawdown: 0,
+                        maxDrawdownPercent: 0, sharpeRatio: 0,
+                        profitFactor: 0, avgWin: 0, avgLoss: 0,
+                        error: results[i] === null ? 'insufficient data' : 'failed'
+                    })
+                })).map(r => {
+                    // Format numbers
+                    r.totalPnl = parseFloat(r.totalPnl.toFixed(2));
+                    r.totalPnlPercent = parseFloat(r.totalPnlPercent.toFixed(3));
+                    r.maxDrawdown = parseFloat(r.maxDrawdown.toFixed(2));
+                    r.maxDrawdownPercent = parseFloat(r.maxDrawdownPercent.toFixed(2));
+                    r.sharpeRatio = parseFloat(r.sharpeRatio.toFixed(2));
+                    r.profitFactor = parseFloat(r.profitFactor.toFixed(2));
+                    r.avgWin = parseFloat(r.avgWin.toFixed(4));
+                    r.avgLoss = parseFloat(r.avgLoss.toFixed(4));
+                    r.finalEquity = parseFloat(r.finalEquity.toFixed(2));
+                    r.winRate = parseFloat(r.winRate.toFixed(1));
+                    return r;
+                });
+
+                // Rank strategies
+                const byPnl = [...comparison].sort((a, b) => b.totalPnlPercent - a.totalPnlPercent);
+                byPnl.forEach((s, i) => s.rankPnl = i + 1);
+                const bySharpe = [...comparison].sort((a, b) => b.sharpeRatio - a.sharpeRatio);
+                bySharpe.forEach((s, i) => s.rankSharpe = i + 1);
+                const byWinRate = [...comparison].sort((a, b) => b.winRate - a.winRate);
+                byWinRate.forEach((s, i) => s.rankWinRate = i + 1);
+                const byPF = [...comparison].sort((a, b) => b.profitFactor - a.profitFactor);
+                byPF.forEach((s, i) => s.rankPF = i + 1);
+
+                // Best overall (average rank)
+                comparison.forEach(s => {
+                    s.avgRank = parseFloat(((s.rankPnl + s.rankSharpe + s.rankWinRate + s.rankPF) / 4).toFixed(1));
+                });
+                comparison.sort((a, b) => a.avgRank - b.avgRank);
+
+                res.json({ comparison, timestamp: new Date().toISOString() });
+            })
+            .catch(e => {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: e.message }));
+            });
+        return;
+    }
+
+    // GET /api/strategy/compare/chart - lightweight data for bar charts
+    if (url === '/api/strategy/compare/chart') {
+        const binance = require('../src/services/BinanceClient');
+        const { trendFollowing, meanReversion, momentum, macdCrossover } = require('../src/strategies');
+        const { ScalpingStrategy } = require('../src/strategies/scalpingStrategy');
+        const { GridStrategy } = require('../src/strategies/gridStrategy');
+
+        const STRATS = [
+            { id: 'trend',        name: '📈 Trend',        fn: (env) => trendFollowing(env, null) },
+            { id: 'mean_reversion',name: '↔️ Mean Rev',    fn: (env) => meanReversion(env) },
+            { id: 'momentum',      name: '💨 Momentum',    fn: (env) => momentum(env, null) },
+            { id: 'macd',          name: '〰️ MACD',        fn: (env) => macdCrossover(env, null) },
+            { id: 'scalping',      name: '⚡ Scalping',    fn: (env) => new ScalpingStrategy().decide(env.getState(), env) },
+            { id: 'grid',          name: '🔲 Grid',        fn: (env) => new GridStrategy().decide(env.getState(), env) },
+        ];
+
+        const CAP = 1000;
+        const CANDLES = 200;
+
+        function runLightBacktest(strategyFn) {
+            return new Promise(async (resolve) => {
+                try {
+                    const client = new binance();
+                    const klines = await client.getKlines('BTCUSDT', '5m', CANDLES);
+                    if (!klines || klines.length < 50) { resolve(null); return; }
+
+                    const env = new (require('../src/environment'))('BTCUSDT', 30);
+                    env.reset(klines);
+                    let pos = 0, entry = 0, btc = 0, cash = CAP;
+
+                    while (true) {
+                        const action = strategyFn(env);
+                        const price = klines[env.step]?.close || 0;
+                        if (!price) break;
+                        if (action === 1 && pos === 0) {
+                            btc = (cash * 0.95) / price;
+                            cash = cash * 0.95 - btc * price * 0.001;
+                            pos = 1; entry = price;
+                        } else if (action === 2 && pos === 1) {
+                            const pnl = (price - entry) * btc - price * btc * 0.001;
+                            cash += pnl + btc * price * 0.999;
+                            btc = 0; pos = 0;
+                        }
+                        env.step++;
+                        if (env.step >= klines.length - 1) break;
+                    }
+                    if (pos === 1) {
+                        const price = klines[klines.length - 1].close;
+                        cash += (price - entry) * btc - price * btc * 0.001 + btc * price * 0.999;
+                    }
+
+                    const finalEquity = cash;
+                    const equityCurve = [CAP, finalEquity]; // just 2 points for sparkline
+                    resolve({ finalEquity, totalPnlPercent: ((finalEquity - CAP) / CAP) * 100, equityCurve });
+                } catch (e) { resolve(null); }
+            });
+        }
+
+        Promise.all(STRATS.map(s => runLightBacktest(s.fn))).then(results => {
+            const chartData = STRATS.map((s, i) => {
+                const r = results[i];
+                if (!r) return { strategyId: s.id, strategyName: s.name, equityCurve: [] };
+                return {
+                    strategyId: s.id,
+                    strategyName: s.name,
+                    finalEquity: parseFloat(r.finalEquity.toFixed(2)),
+                    pnlPct: parseFloat(r.totalPnlPercent.toFixed(3)),
+                    equityCurve: r.equityCurve
+                };
+            });
+            res.json({ chartData });
+        }).catch(e => { res.statusCode = 500; res.end(JSON.stringify({ error: e.message })); });
+        return;
+    }
     
     // ─── Trade Journal ─────────────────────────────────────────────────────────
     

@@ -704,6 +704,34 @@ Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
 <canvas id="paperEquityChart"></canvas>
 </div>
 </div>
+<!-- Strategy Comparison Card -->
+<div class="card" style="margin-top:16px" id="strategyCompareCard">
+<div class="card-header">
+<span>⚖️ Strategy Comparison</span>
+<button onclick="runStrategyCompare()" id="stratCompareBtn" style="margin-left:auto;background:var(--bg);border:1px solid var(--border);color:var(--blue);padding:4px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">⚡ Compare</button>
+</div>
+<div class="card-body" id="stratCompareBody" style="padding:12px">
+<div id="stratCompareEmpty" style="text-align:center;color:var(--text2);font-size:.7rem;padding:20px">
+Kliknij <strong>⚡ Compare</strong> aby przetestować wszystkie strategie na ostatnich 300 świecach
+</div>
+<div id="stratCompareResults" style="display:none">
+<!-- Metric selector tabs -->
+<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+<button class="strat-tab active" data-metric="totalPnlPercent" onclick="setStratMetric('totalPnlPercent')" style="background:var(--blue);color:#fff;border:none;padding:5px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">P&L %</button>
+<button class="strat-tab" data-metric="winRate" onclick="setStratMetric('winRate')" style="background:var(--bg);color:var(--text2);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">Win Rate</button>
+<button class="strat-tab" data-metric="sharpeRatio" onclick="setStratMetric('sharpeRatio')" style="background:var(--bg);color:var(--text2);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">Sharpe</button>
+<button class="strat-tab" data-metric="profitFactor" onclick="setStratMetric('profitFactor')" style="background:var(--bg);color:var(--text2);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">Profit Factor</button>
+</div>
+<!-- Bar chart -->
+<div style="position:relative;height:160px;margin-bottom:12px">
+<canvas id="stratCompareChart"></canvas>
+</div>
+<!-- Comparison table -->
+<div id="stratCompareTable" style="font-size:.65rem;overflow-x:auto"></div>
+</div>
+</div>
+</div>
+
 <!-- Performance Summary Card -->
 <div class="card" style="margin-top:16px" id="performanceCard">
 <div class="card-header">📊 Performance Summary</div>
@@ -2516,6 +2544,154 @@ async function checkOptimizerState() {
 }
 
 setTimeout(checkOptimizerState, 1000);
+
+// ─── Strategy Comparison ──────────────────────────────────────────────────────
+let stratChart = null;
+let currentStratMetric = 'totalPnlPercent';
+let lastStratData = null;
+
+async function runStrategyCompare() {
+    const btn = document.getElementById('stratCompareBtn');
+    const empty = document.getElementById('stratCompareEmpty');
+    const results = document.getElementById('stratCompareResults');
+
+    btn.disabled = true;
+    btn.textContent = '⏳ Running...';
+    empty.style.display = 'block';
+    empty.textContent = '⏳ Running backtests (6 strategies × 300 candles)...';
+    results.style.display = 'none';
+
+    try {
+        const res = await fetch('/api/strategy/compare');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        lastStratData = data.comparison;
+        renderStratCompare(data.comparison);
+        empty.style.display = 'none';
+        results.style.display = 'block';
+        btn.textContent = '🔄 Re-run';
+    } catch(e) {
+        empty.textContent = '❌ Error: ' + e.message;
+        btn.textContent = '⚡ Compare';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function setStratMetric(metric) {
+    currentStratMetric = metric;
+    document.querySelectorAll('.strat-tab').forEach(t => {
+        t.classList.remove('active');
+        t.style.background = 'var(--bg)';
+        t.style.color = 'var(--text2)';
+    });
+    const active = document.querySelector(`.strat-tab[data-metric="${metric}"]`);
+    if (active) { active.classList.add('active'); active.style.background = 'var(--blue)'; active.style.color = '#fff'; }
+    if (lastStratData) renderStratCompare(lastStratData);
+}
+
+function renderStratCompare(comparison) {
+    if (!comparison || !comparison.length) return;
+
+    const metric = currentStratMetric;
+    const metricLabels = {
+        totalPnlPercent: 'P&L %', winRate: 'Win Rate %', sharpeRatio: 'Sharpe', profitFactor: 'Profit Factor'
+    };
+    const metricColors = {
+        totalPnlPercent: (v) => v >= 0 ? '#3fb950' : '#f85149',
+        winRate: '#58a6ff',
+        sharpeRatio: '#a371f7',
+        profitFactor: '#f0883e'
+    };
+
+    const sorted = [...comparison].sort((a, b) => b[metric] - a[metric]);
+    const labels = sorted.map(s => s.strategyName);
+    const values = sorted.map(s => s[metric]);
+    const colors = sorted.map(s => metricColors[metric] ? (typeof metricColors[metric] === 'function' ? metricColors[metric](s[metric]) : metricColors[metric]) : '#58a6ff');
+    const maxVal = Math.max(...values.map(Math.abs), 0.001);
+
+    // Bar chart
+    if (stratChart) stratChart.destroy();
+    const ctx = document.getElementById('stratCompareChart').getContext('2d');
+    stratChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                data: values,
+                backgroundColor: colors.map(c => c + '99'),
+                borderColor: colors,
+                borderWidth: 2,
+                borderRadius: 6
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: {
+                callbacks: {
+                    label: (ctx) => {
+                        const s = sorted[ctx.dataIndex];
+                        return [
+                            `${metricLabels[metric]}: ${ctx.raw >= 0 ? '+' : ''}${parseFloat(ctx.raw).toFixed(2)}`,
+                            `Rank #${s.rankPnl} P&L | #${s.rankSharpe} Sharpe | #${s.rankWinRate} WR | #${s.rankPF} PF`,
+                            `Avg Rank: ${s.avgRank}`
+                        ];
+                    }
+                }
+            }},
+            scales: {
+                x: {
+                    grid: { color: '#30363d' },
+                    ticks: { color: '#8b949e', font: { size: 9 } }
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: { color: '#c9d1d9', font: { size: 9 }, mirror: false }
+                }
+            }
+        }
+    });
+
+    // Table
+    const table = document.getElementById('stratCompareTable');
+    table.innerHTML = `
+    <table style="width:100%;border-collapse:collapse">
+        <thead>
+            <tr style="color:var(--text2);text-transform:uppercase;font-size:.55rem">
+                <th style="padding:4px 6px;text-align:left">Strategy</th>
+                <th style="padding:4px 6px;text-align:right">P&L %</th>
+                <th style="padding:4px 6px;text-align:right">Win%</th>
+                <th style="padding:4px 6px;text-align:right">Sharpe</th>
+                <th style="padding:4px 6px;text-align:right">PF</th>
+                <th style="padding:4px 6px;text-align:right">MaxDD%</th>
+                <th style="padding:4px 6px;text-align:right">Avg Rank</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${sorted.map((s, i) => `
+            <tr style="border-bottom:1px solid var(--border);${i === 0 ? 'background:rgba(63,185,80,.1)' : ''}" onclick="selectPaperStrategy('${s.strategyId}')" title="Click to use this strategy">
+                <td style="padding:5px 6px;font-weight:${i===0?'700':'400'};color:${i===0?'var(--green)':'var(--text)'}">${i===0?'🏆 ':''}${s.strategyName}</td>
+                <td style="padding:5px 6px;text-align:right;color:${s.totalPnlPercent>=0?'var(--green)':'var(--red)'}">${s.totalPnlPercent>=0?'+':''}${s.totalPnlPercent.toFixed(3)}%</td>
+                <td style="padding:5px 6px;text-align:right;color:var(--blue)">${s.winRate.toFixed(1)}%</td>
+                <td style="padding:5px 6px;text-align:right;color:var(--purple)">${s.sharpeRatio.toFixed(2)}</td>
+                <td style="padding:5px 6px;text-align:right;color:var(--orange)">${s.profitFactor > 10 ? '∞' : s.profitFactor.toFixed(2)}</td>
+                <td style="padding:5px 6px;text-align:right;color:${s.maxDrawdownPercent>10?'var(--red)':'var(--text2)'}">${s.maxDrawdownPercent.toFixed(2)}%</td>
+                <td style="padding:5px 6px;text-align:right;font-weight:700;color:var(--blue)">${s.avgRank}</td>
+            </tr>`).join('')}
+        </tbody>
+    </table>`;
+}
+
+function selectPaperStrategy(strategyId) {
+    // Set the paper strategy dropdown and notify user
+    const select = document.getElementById('paperStrategy');
+    if (select) {
+        select.value = strategyId;
+        log(`📌 Strategy "${strategyId}" selected for Paper Trading (click to start)`, 'system');
+    }
+}
 </script>
 <div id="episodeModal">
   <div class="modal-content">

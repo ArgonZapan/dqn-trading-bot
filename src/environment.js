@@ -6,6 +6,7 @@
 
 const { atr } = require('./indicators');
 const { sentimentAnalyzer } = require('./sentimentAnalyzer');
+const { MLFeatures } = require('./mlFeatures');
 
 class TradingEnvironment {
     constructor(pair = 'BTCUSDT', windowSize = 59) {
@@ -35,6 +36,10 @@ class TradingEnvironment {
         // Stop loss price
         this.stopLoss = 0;
         this.takeProfit = 0;
+        
+        // ML Features
+        this.mlFeatures = new MLFeatures();
+        this.mlEnabled = process.env.ML_FEATURES_ENABLED !== 'false';
     }
 
     reset(candles) {
@@ -50,6 +55,8 @@ class TradingEnvironment {
         this.lowestPrice = Infinity;
         this.stopLoss = 0;
         this.takeProfit = 0;
+        // Reset ML features history on new episode
+        if (this.mlEnabled) this.mlFeatures.reset();
         return this.getState();
     }
 
@@ -114,7 +121,9 @@ class TradingEnvironment {
             peakCapital: this.peakCapital || 1000,
             drawdown: this.peakCapital > 0 ? Math.max(0, (this.peakCapital - this.balance(price)) / this.peakCapital) : 0,
             // Market sentiment (-1 do +1, znormalizowane do 0-1)
-            sentiment: sentimentAnalyzer.getStateFeature()
+            sentiment: sentimentAnalyzer.getStateFeature(),
+            // ML Features - pattern recognition, prediction, anomaly detection
+            ...(this.mlEnabled ? this.mlFeatures.getMLFeatures({}, { candles: window }) : {})
         };
     }
     

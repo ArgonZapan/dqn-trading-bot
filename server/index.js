@@ -18,6 +18,7 @@ const tradeJournal = require('../src/tradeJournal');
 const Rebalancer = require('../src/rebalancer');
 const { sentimentAnalyzer } = require('../src/sentimentAnalyzer');
 const VolatilityRegime = require('../src/volatilityRegime');
+const { MLFeatures } = require('../src/mlFeatures');
 
 // State
 let prices = { btc: 0, eth: 0, sol: 0 };
@@ -501,6 +502,7 @@ const env = new Env('BTCUSDT', 59);
 const agent = new Agent(300, 3);
 const hyperopt = new Hyperopt();
 const rebalancer = new Rebalancer({ enabled: false, threshold: 0.05 });
+const mlFeatures = new MLFeatures();
 
 // Load last model if exists
 async function loadLastModel() {
@@ -1611,6 +1613,29 @@ const server = http.createServer(async (req, res) => {
 
     // GET /api/sentiment - Market Sentiment dla dashboard
     if (url === '/api/sentiment') {
+        const urlParts = req.url.split('?');
+        const params = new URLSearchParams(urlParts[1] || '');
+        const keyword = params.get('keyword') || 'BTC';
+        // Async refresh and return
+        sentimentAnalyzer.getCombinedSentiment(keyword).then(() => {
+            res.json(sentimentAnalyzer.getDashboardData());
+        }).catch(err => {
+            console.error('[Sentiment] API error:', err.message);
+            res.status(500).json({ error: err.message });
+        });
+        return;
+    }
+    
+    // GET /api/ml-insights - ML Insights dla dashboard
+    if (url === '/api/ml-insights') {
+        // Pobierz ostatnie ceny z candles
+        const candles = paperCandles.btc.length > 0 ? paperCandles.btc : [];
+        const prices = candles.map(c => c.close);
+        const volumes = candles.map(c => c.volume);
+        const insights = mlFeatures.getDashboardData(prices, volumes);
+        res.json(insights);
+        return;
+    }
         const urlParts = req.url.split('?');
         const params = new URLSearchParams(urlParts[1] || '');
         const keyword = params.get('keyword') || 'BTC';

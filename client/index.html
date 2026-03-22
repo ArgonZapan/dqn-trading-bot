@@ -688,6 +688,9 @@ Signal Filter: <span id="htfSignalText" style="font-weight:600">--</span>
 <button class="btn" id="paperHistoryBtn" onclick="togglePaperHistory()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#6366f1,#4f46e5)">📜 HISTORY</button>
 <button class="btn" id="paperEquityBtn" onclick="togglePaperEquity()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#a371f7,#8957e5)">📈 EQUITY</button>
 <button class="btn" id="paperClearHistory" onclick="clearPaperHistory()" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#ef4444,#dc2626)">🗑️</button>
+<button class="btn" onclick="exportPaperTrades('csv')" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#10b981,#059669)">📥 CSV</button>
+<button class="btn" onclick="exportPaperTrades('json')" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#3b82f6,#1d4ed8)">📥 JSON</button>
+<button class="btn" onclick="exportPaperEquity('csv')" style="font-size:.7rem;padding:8px 12px;background:linear-gradient(135deg,#8b5cf6,#7c3aed)">📊 EQ CSV</button>
 </div>
 <div id="paperStatus" style="margin-top:8px;font-size:.65rem;color:var(--text2)">Status: Stopped</div>
 <div id="paperHistorySection" style="display:none;margin-top:12px;max-height:200px;overflow-y:auto">
@@ -1578,6 +1581,39 @@ async function clearPaperHistory(){
   await fetch('/api/paper-trading/clear-history').then(x=>x.json());
   await loadPaperHistory();
   log('Paper history cleared','system');
+}
+
+// Export paper trading data
+async function exportPaperTrades(format) {
+  const endpoint = `/api/paper-trading/export/${format}`;
+  try {
+    const res = await fetch(endpoint);
+    if (!res.ok) throw new Error('Export failed');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `paper-trades.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+    log(`Exported paper trades as ${format.toUpperCase()}`, 'system');
+  } catch(e) { log('Export failed: ' + e.message, 'error'); }
+}
+
+async function exportPaperEquity(format) {
+  const endpoint = `/api/paper-trading/export/equity-csv`;
+  try {
+    const res = await fetch(endpoint);
+    if (!res.ok) throw new Error('Export failed');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `paper-equity.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+    log('Exported equity curve as CSV', 'system');
+  } catch(e) { log('Equity export failed: ' + e.message, 'error'); }
 }
 
 // Paper equity chart

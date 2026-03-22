@@ -1247,6 +1247,61 @@ const server = http.createServer(async (req, res) => {
         return;
     }
     
+    // ─── Paper Trading Export ─────────────────────────────────────────────────
+    
+    // GET /api/paper-trading/export/csv - Export closed trades as CSV
+    if (url === '/api/paper-trading/export/csv') {
+        const closed = paperTrading.closedTrades;
+        const header = 'ID,Side,Entry Price,Exit Price,Quantity,Entry Time,Exit Time,PNL,Fee,Duration (min)\n';
+        const rows = closed.map(t => {
+            const entry = t.entryPrice || t.price;
+            const exit = t.exitPrice || t.price;
+            const duration = t.exitTime ? Math.round((t.exitTime - t.entryTime) / 60000) : 0;
+            return `${t.id},${t.side},${entry?.toFixed(2)},${exit?.toFixed(2)},${t.quantity?.toFixed(6)},${new Date(t.entryTime).toISOString()},${t.exitTime ? new Date(t.exitTime).toISOString() : ''},${t.pnl?.toFixed(2)},${t.fee?.toFixed(2)},${duration}`;
+        }).join('\n');
+        const csv = header + rows;
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="paper-trades-${Date.now()}.csv"`);
+        res.end(csv);
+        return;
+    }
+    
+    // GET /api/paper-trading/export/json - Export full paper trading state
+    if (url === '/api/paper-trading/export/json') {
+        updatePaperStats();
+        const exportData = {
+            exportedAt: new Date().toISOString(),
+            config: {
+                strategy: paperStrategy,
+                positionSize: paperPositionSize,
+                stopLoss: paperTrading.stopLoss,
+                takeProfit: paperTrading.takeProfit
+            },
+            stats: paperTrading.stats,
+            equityCurve: paperEquityCurve,
+            closedTrades: paperTrading.closedTrades,
+            openPositions: paperTrading.positions,
+            currentCapital: paperTrading.capital
+        };
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename="paper-trading-${Date.now()}.json"`);
+        res.end(JSON.stringify(exportData, null, 2));
+        return;
+    }
+    
+    // GET /api/paper-trading/export/equity-csv - Export equity curve as CSV
+    if (url === '/api/paper-trading/export/equity-csv') {
+        const header = 'Time,Equity,Drawdown,Drawdown %,Price\n';
+        const rows = paperEquityCurve.map(e =>
+            `${new Date(e.time).toISOString()},${e.equity?.toFixed(2)},${e.drawdown?.toFixed(2)},${e.drawdownPercent?.toFixed(2)},${e.price?.toFixed(2)}`
+        ).join('\n');
+        const csv = header + rows;
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="paper-equity-${Date.now()}.csv"`);
+        res.end(csv);
+        return;
+    }
+    
     // ─── Trade Journal ─────────────────────────────────────────────────────────
     
     // GET /api/trade-journal - list trades with pagination

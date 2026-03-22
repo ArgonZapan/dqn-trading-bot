@@ -638,6 +638,57 @@ input:checked + .slider::before { transform: translateX(18px); }
 
 .log-entry.system { color: var(--text2); }
 
+/* ─── EPISODE ────────────────────────────────────────────── */
+
+.chart-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+  font-size: 0.7rem;
+}
+
+.episode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.episode-row {
+  display: grid;
+  grid-template-columns: 50px 70px 70px 1fr;
+  gap: 8px;
+  font-size: 0.7rem;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-radius: 6px;
+}
+
+.text-muted { color: var(--text2); font-size: 0.7rem; }
+
+/* ─── TRADE TABLE ────────────────────────────────────────── */
+
+.trade-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.trade-table th,
+.trade-table td {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.trade-table th {
+  color: var(--text2);
+  font-weight: 600;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+
 /* ─── RESPONSIVE ────────────────────────────────────────── */
 
 @media (max-width: 768px) {

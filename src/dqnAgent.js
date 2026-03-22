@@ -270,16 +270,8 @@ class DQNAgent {
         }
         
         this.steps++;
-        // Convert TF tensor to number
-        let lossValue;
-        if (loss && typeof loss.dataSync === 'function') {
-            lossValue = loss.dataSync()[0];
-            loss.dispose();
-        } else {
-            lossValue = loss;
-        }
-        this.lastLoss = lossValue;
-        return lossValue;
+        this.lastLoss = typeof loss === 'number' ? loss : null;
+        return loss;
     }
 
     getQValues(state) {

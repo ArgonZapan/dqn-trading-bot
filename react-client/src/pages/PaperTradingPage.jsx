@@ -1,4 +1,5 @@
 import { Card, Button } from '../components/common';
+import { TradeTable, EquityCurveChart } from '../components/paper/TradeTable';
 import { usePaperStatus, usePaperStart, usePaperStop, usePaperReset, useSelectStrategy } from '../hooks/useApi';
 import useAppStore from '../store/useAppStore';
 
@@ -90,15 +91,11 @@ export default function PaperTradingPage() {
         </div>
       </Card>
 
-      {/* Equity Curve placeholder */}
-      <Card title="📈 Equity Curve">
-        <div className="chart-placeholder">Uruchom Paper Trading</div>
-      </Card>
+      {/* Equity Curve */}
+      <EquityCurveChart />
 
-      {/* Trade Journal placeholder */}
-      <Card title="📖 Trade Journal">
-        <div className="empty-state">Brak transakcji</div>
-      </Card>
+      {/* Trade History */}
+      <TradeTable />
     </div>
   );
 }

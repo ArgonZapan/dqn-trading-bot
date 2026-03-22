@@ -899,7 +899,7 @@ class LiveTrader {
     const winRate = closed.length > 0 ? (winning.length / closed.length) * 100 : 0;
     const avgWin = winning.length > 0 ? winning.reduce((s, t) => s + (t.pnl || 0), 0) / winning.length : 0;
     const avgLoss = losing.length > 0 ? losing.reduce((s, t) => s + (t.pnl || 0), 0) / losing.length : 0;
-    const profitFactor = totalPnl > 0 && avgLoss !== 0 ? Math.abs(avgWin / avgLoss) : totalPnl > 0 ? Infinity : 0;
+    const profitFactor = totalPnl > 0 && avgLoss !== 0 ? Math.min(Math.abs(avgWin / avgLoss), 99) : totalPnl > 0 ? 99 : 0;
 
     let currentStreak = 0, bestStreak = 0, worstStreak = 0, streak = 0;
     for (const t of closed) {

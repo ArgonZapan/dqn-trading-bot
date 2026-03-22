@@ -466,7 +466,7 @@ function backtestScalpingStrategy(data, params = {}) {
     
     const totalWins = wins.reduce((sum, t) => sum + t.profit, 0);
     const totalLosses = Math.abs(losses.reduce((sum, t) => sum + t.profit, 0));
-    const profitFactor = totalLosses > 0 ? totalWins / totalLosses : totalWins > 0 ? Infinity : 0;
+    const profitFactor = totalLosses > 0 ? Math.min(totalWins / totalLosses, 99) : totalWins > 0 ? 99 : 0;
     
     const avgProfit = sells.length > 0 ? sells.reduce((sum, t) => sum + t.profit, 0) / sells.length : 0;
     

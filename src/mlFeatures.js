@@ -393,7 +393,33 @@ class MLFeatures {
             trendSlope: trendLine.slope,
 
             // Pozycja ceny względem średniej (0-1)
-            priceVsMA: priceRange > 0 ? (lastPrice - min(prices)) / priceRange : 0.5
+            priceVsMA: priceRange > 0 ? (lastPrice - min(prices)) / priceRange : 0.5,
+
+            // Aggregate ML signal - kombinacja wszystkich sygnałów ML
+            // Używany przez DQN act() do biasowania Q-values gdy ML confidence jest wysokie
+            totalML: (() => {
+                // Waga patternów (0-1)
+                const patternSignal = (state.patternDoubleBottom || 0) * 0.3
+                    + (state.patternDoubleTop || 0) * 0.3
+                    + (state.patternHeadShoulders || 0) * 0.2
+                    + (state.patternUptrend || 0) * 0.2
+                    - (state.patternDowntrend || 0) * 0.2;
+                
+                // Waga predykcji kierunku
+                const directionSignal = (state.predictedDirectionUp || 0) * 0.4
+                    - (state.predictedDirectionDown || 0) * 0.4
+                    + (state.predictedDirectionNeutral || 0) * 0.1;
+                
+                // Confidence * direction
+                const confidence = state.predictionConfidence || 0;
+                const predictionSignal = directionSignal * confidence;
+                
+                // Anomaly signal (ujemny gdy anomalia = ryzyko)
+                const anomalySignal = (state.isAnomaly ? -0.2 : 0);
+                
+                // Combine all ML signals (0-1 range)
+                return Math.max(0, Math.min(1, 0.5 + (patternSignal * 0.3 + predictionSignal * 0.5 + anomalySignal * 0.2)));
+            })()
         };
     }
 

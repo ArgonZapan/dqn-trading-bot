@@ -360,7 +360,7 @@ class HyperparameterOptimizer {
         // Oblicz metryki
         const totalReturn = ((equity - startEquity) / startEquity) * 100;
         const winRate = tradesCount > 0 ? (winningTrades / tradesCount) * 100 : 0;
-        const profitFactor = totalLoss > 0 ? totalWin / totalLoss : totalWin > 0 ? Infinity : 0;
+        const profitFactor = totalLoss > 0 ? Math.min(totalWin / totalLoss, 99) : totalWin > 0 ? 99 : 0;
         
         // Sharpe Ratio (uproszczony)
         let sharpeRatio = 0;

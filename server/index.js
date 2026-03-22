@@ -859,10 +859,6 @@ function paperPositionsValue() {
     }, 0);
 }
 
-function paperFreeCapital() {
-    return paperTrading.capital;
-}
-
 // Paper trading loop
 let paperOpenPosition = null; // null | { side, entryPrice, quantity }
 

@@ -17,12 +17,12 @@
 │                     (Binance Spot BTC/USDT)                 │
 ├──────────────┬──────────────┬───────────────┬───────────────┤
 │   CLIENT     │   SERVER     │    AGENT      │   SERVICES    │
-│  Dashboard   │  Express +   │  Double DQN   │  Binance WS   │
-│  HTML/CSS/   │  Socket.IO   │  + PER +      │  Real-time    │
-│  JavaScript  │  0.0.0.0     │  Dueling      │  klines       │
-│              │              │               │               │
-│  📊 Charts   │  /api/*      │  ↕ TensorFlow │  📈 Indicators │
-│  📈 Metrics  │  REST API    │    .js        │  RSI/MACD/BB  │
+│  Dashboard   │  Raw Node.js│  Double DQN   │  Binance WS   │
+│  Vanilla JS  │  http.Server│  + PER +      │  Real-time    │
+│  + Chart.js │  REST API   │  Dueling      │  klines       │
+│              │  port 3000   │               │               │
+│  📊 Charts   │  /api/*     │  ↕ TensorFlow │  📈 Indicators │
+│  📈 Metrics  │              │    .js        │  RSI/MACD/BB  │
 │  💰 Portfolio │              │               │  EMA(9,21,50) │
 │  🎮 Controls │              │  ReplayBuffer │               │
 └──────────────┴──────────────┴───────────────┴───────────────┘
@@ -36,6 +36,8 @@
                     └───────────────┘
 ```
 
+> **Uwaga:** Serwer to raw `http.Server` (Node.js), NIE Express. Klient używa Vanilla JS + Chart.js (starsza wersja). Nowy frontend React jest w `react-client/`.
+
 ---
 
 ## 🚀 Szybki start
@@ -48,12 +50,13 @@ npm install
 cp .env.example .env
 # Edytuj .env i dodaj klucze API z uprawnieniami do handlu spot
 
-# 3. Uruchom dashboard (LAN)
+# 3. Uruchom serwer (LAN)
 npm start
-# Otwórz http://<IP_SERWERA>:3000
+# lub: node server/index.js
+# Dashboard: http://<IP_SERWERA>:3000
 
-# 4. Trenuj agenta
-npm run train
+# 4. Trenuj agenta (przez dashboard)
+Dashboard → sekcja Kontrola → TRAIN
 
 # 5. Backtest
 npm run backtest
@@ -66,39 +69,54 @@ npm run backtest
 ```
 dqn-trading-bot/
 ├── server/
-│   └── index.js              # Express + Socket.IO server
+│   └── index.js              # Raw http.Server API (port 3000)
 ├── client/
-│   └── index.html             # Dashboard HTML
+│   └── index.html            # Dashboard HTML (Vanilla JS + Chart.js)
+├── react-client/             # 🆕 Nowy frontend React (w trakcie rozwoju)
+│   ├── src/
+│   │   ├── pages/            # TrainingPage, BacktestPage, LiveTrading...
+│   │   ├── components/       # Layout, Nav, common components
+│   │   ├── hooks/            # useApi (React Query hooks)
+│   │   ├── store/            # Zustand state management
+│   │   └── api/              # API client
+│   └── vite.config.js
 ├── src/
 │   ├── agents/
-│   │   └── DQNAgent.ts        # Double DQN + PER + Dueling Networks
+│   │   └── DQNAgent.ts       # Double DQN + PER + Dueling Networks
 │   ├── environments/
 │   │   └── TradingEnvironment.ts  # RL environment (state/action/reward)
 │   ├── models/
 │   │   └── DQNModel.ts        # Neural network (TF.js)
 │   ├── services/
-│   │   └── BinanceClient.ts   # Binance REST + WebSocket
+│   │   ├── BinanceClient.ts  # Binance REST + WebSocket
+│   │   ├── LiveTrader.js     # Live trading executor
+│   │   └── PaperTrader.ts     # Paper trading engine
 │   ├── utils/
 │   │   ├── ReplayBuffer.ts    # Prioritized Experience Replay
 │   │   └── MetricsCalculator.ts  # Sharpe, MaxDD, WinRate, PF
 │   ├── indicators.js          # RSI, MACD, EMA, Bollinger Bands
-│   ├── environment.js         # Legacy JS environment
-│   ├── dqnAgent.js            # Legacy JS agent
-│   ├── replayBuffer.js        # Legacy JS buffer
-│   ├── metrics.js             # Trading metrics tracker
+│   ├── environment.js         # TradingEnvironment (legacy JS)
+│   ├── dqnAgent.js            # DQNAgent (legacy JS)
+│   ├── replayBuffer.js        # ReplayBuffer (legacy JS)
+│   ├── metrics.js             # MetricsCalculator (legacy JS)
 │   ├── portfolio.js           # Portfolio state
 │   ├── risk.js                # Risk manager (stop-loss, position sizing)
 │   ├── notifier.js            # Telegram notifications
 │   ├── strategies.js          # Trading strategies
+│   ├── strategies/
+│   │   ├── scalpingStrategy.ts
+│   │   ├── gridStrategy.ts
+│   │   └── ...
 │   └── logger.js              # Structured logging
 ├── scripts/
 │   ├── train.js               # Training script
 │   └── backtest.ts            # Backtest z pełnymi metrykami
-├── tests/
-│   └── *.js                   # Testy modułów
-├── dist/                      # Skompilowane pliki TS
+├── tests/                     # Testy jednostkowe (Mocha)
+├── models/                    # Zapisane modele DQN (dqn-ep{N}.json)
+├── dist/                      # Skompilowane pliki TS (nie używane)
+├── trade-journal.json         #Dziennik transakcji
 ├── .env.example               # Przykładowa konfiguracja
-├── docker-compose.yml          # Docker deployment
+├── docker-compose.yml         # Docker deployment
 ├── Dockerfile
 └── README.md
 ```
@@ -213,14 +231,18 @@ docker-compose up -d
 
 ---
 
-## 📈 Dashboard
+## 📈 Dashboard (client/index.html)
 
 - **Ceny na żywo** — BTC, ETH, SOL z WebSocket
 - **Portfolio** — stan konta, pozycja, unrealized P&L
-- **Wykresy** — cena + wskaźniki techniczne
+- **Wykresy** — cena + wskaźniki techniczne (Chart.js)
 - **Kontrolki** — start/stop/parametry agenta
 - **Metryki** — Sharpe, MaxDD, WinRate w czasie rzeczywistym
 - **Logi** — ostatnie transakcje i decyzje agenta
+- **Paper Trading** — pełna symulacja z SL/TP, trailing stop
+- **Live Trading** — handel na realnym rachunku Binance
+
+> 🆕 **Nowy frontend React** w `react-client/` — Vite + React Query + Zustand + Recharts. W trakcie rozwoju.
 
 ---
 
@@ -239,49 +261,27 @@ Pełna symulacja tradingu z realnymi cenami z Binance. **Paper trading jest zale
 
 ### Uruchomienie
 
-1. Dashboard → sekcja **📄 Paper Trading**
+1. Dashboard → sekcja **Paper Trading**
 2. Wybierz strategię z dropdown
-3. Kliknij **▶ START PAPER TRADING**
+3. Kliknij **START PAPER TRADING**
 4. Monitoruj equity curve i statystyki
-
-### API Endpoints Paper Trading
-
-| Method | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/paper-trading` | Status, capital, pozycje, statystyki |
-| POST | `/api/paper-trading/start` | Start paper trading (kapitał $1000) |
-| POST | `/api/paper-trading/stop` | Stop paper trading |
-| POST | `/api/paper-trading/toggle` | Toggle paper trading |
-| POST | `/api/paper-trading/reset` | Reset do $1000 |
-| POST | `/api/paper-trading/sltp` | Ustaw SL/TP (body: `{"sl":2.0,"tp":4.0}`) |
-| POST | `/api/paper-trading/strategy` | Ustaw strategię (body: `{"strategy":"trend"}`) |
-| GET | `/api/paper-trading/history` | Historia zamkniętych trade'ów |
-| GET | `/api/paper-trading/equity-curve` | Equity curve + drawdown |
-| POST | `/api/paper-trading/clear-history` | Wyczyść historię |
-
-### Live Trading vs Paper Trading
-
-| Cecha | Paper | Live |
-|-------|-------|------|
-| Pieniądze | Symulowane | Realne |
-| API Binance | Nie wymaga kluczy | Wymaga kluczy z uprawnieniami |
-| Ryzyko | Brak | Pełne |
-| Trailing Stop | ✅ | ✅ |
-| SL/TP | ✅ | ✅ |
-| Alerty Telegram | ✅ | ✅ |
-
-> ⚠️ **WAŻNE:** Przed handlem na żywo przetestuj strategię w paper mode przez minimum 24h.
 
 ---
 
 ## 🔗 API Endpoints
 
+### Server Status
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/status` | Status serwera, ceny, tradingActive |
+| GET | `/api/prices` | Aktualne ceny BTC, ETH, SOL |
+
 ### Agent & Training
 
 | Method | Endpoint | Opis |
 |--------|----------|------|
-| GET | `/api/status` | Status serwera |
-| GET | `/api/prices` | Aktualne ceny BTC, ETH, SOL |
+| GET | `/api/training/status` | Status treningu (isTraining, epsilon, episode, duration) |
 | POST | `/api/training/start` | Start treningu |
 | POST | `/api/training/stop` | Stop treningu |
 | POST | `/api/training/save` | Zapisz model ręcznie |
@@ -294,16 +294,66 @@ Pełna symulacja tradingu z realnymi cenami z Binance. **Paper trading jest zale
 |--------|----------|------|
 | GET | `/api/episode-data` | Dane ostatniego epizodu (trades, equity, epsilon) |
 | GET | `/api/episode-history` | Historia zakończonych epizodów |
-| GET | `/api/episode-history/detail?episode=N` | Szczegóły epizodu N |
+| GET | `/api/episode-history/detail/:episode` | Szczegóły epizodu N |
 
-### Portfolio & Metrics
+### Metrics
 
 | Method | Endpoint | Opis |
 |--------|----------|------|
-| GET | `/api/portfolio` | Stan portfolio |
 | GET | `/api/metrics` | Metryki (Sharpe, MaxDD, WinRate, PF) |
 | GET | `/api/trades` | Ostatnie 20 transakcji |
-| GET | `/api/htf-trend` | High timeframe trend |
+| GET | `/api/portfolio` | Stan portfolio |
+| GET | `/api/buffer-health` | Health check replay buffer |
+
+### HTF Trend
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/htf-trend` | High timeframe trend (1H, 4H) |
+| GET | `/api/sentiment` | Market sentiment (mock) |
+| GET | `/api/ml-insights` | ML insights |
+
+### Paper Trading
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/paper-trading` | Status, capital, pozycje, statystyki |
+| GET | `/api/paper-trading/status` | Status paper tradera |
+| POST | `/api/paper-trading/start` | Start paper trading (kapitał $1000) |
+| POST | `/api/paper-trading/stop` | Stop paper trading |
+| POST | `/api/paper-trading/toggle` | Toggle paper trading |
+| POST | `/api/paper-trading/reset` | Reset do $1000 |
+| POST | `/api/paper-trading/sltp` | Ustaw SL/TP (body: `{"sl":2.0,"tp":4.0}`) |
+| POST | `/api/paper-trading/strategy` | Ustaw strategię (body: `{"strategy":"trend"}`) |
+| POST | `/api/paper-trading/scalp-params` | Ustaw parametry scalping |
+| GET | `/api/paper-trading/history` | Historia zamkniętych trade'ów |
+| GET | `/api/paper-trading/equity-curve` | Equity curve + drawdown |
+| POST | `/api/paper-trading/clear-history` | Wyczyść historię |
+
+### Backtest
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/backtest/quick` | Szybki backtest (trend strategy) |
+| GET | `/api/backtest/full` | Pełny backtest |
+| GET | `/api/backtest/scalping` | Backtest scalping strategii |
+| GET | `/api/backtest/grid` | Backtest grid strategii |
+| POST | `/api/strategy/compare` | Porównanie wszystkich strategii |
+| GET | `/api/strategy/compare/chart` | Wykres porównania strategii |
+
+### Monte Carlo
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/monte-carlo/quick` | Szybki Monte Carlo (100 symulacji) |
+| GET | `/api/monte-carlo/full` | Pełny Monte Carlo (1000 symulacji) |
+
+### Risk Management
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/risk/report` | Risk report |
+| GET | `/api/risk/can-trade` | Sprawdź czy można handlować |
 
 ### Live Trading (Binance)
 
@@ -319,7 +369,7 @@ Pełna symulacja tradingu z realnymi cenami z Binance. **Paper trading jest zale
 | GET | `/api/live-trading/history` | Historia live trade'ów |
 | GET | `/api/live-trading/config-check` | Sprawdź konfigurację API |
 
-### Alerts
+### Alerts & Notifications
 
 | Method | Endpoint | Opis |
 |--------|----------|------|

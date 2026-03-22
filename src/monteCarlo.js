@@ -49,11 +49,15 @@ function runSimulation(journal, options = {}) {
     const maxDrawdowns = [];
     const tradeCountWins = [];
 
+    // Store per-step equity for fan chart percentile bands
+    const perStepEquities = Array.from({ length: tradesPerRun }, () => []);
+
     for (let sim = 0; sim < numSimulations; sim++) {
         let equity = initialCapital;
         let peak = initialCapital;
         let maxDD = 0;
         let wins = 0;
+        const steps = [equity]; // step 0 = initial capital
 
         for (let i = 0; i < tradesPerRun; i++) {
             // Randomly sample from historical trades (with replacement)
@@ -65,6 +69,8 @@ function runSimulation(journal, options = {}) {
             maxDD = Math.max(maxDD, drawdown);
 
             if (sampledReturn > 0) wins++;
+            steps.push(equity);
+            perStepEquities[i].push(equity);
         }
 
         equityCurves.push({ sim, equity, maxDrawdown: maxDD * 100, wins });
@@ -72,6 +78,25 @@ function runSimulation(journal, options = {}) {
         maxDrawdowns.push(maxDD * 100);
         tradeCountWins.push(wins);
     }
+
+    // Compute percentile bands for fan chart at each step
+    // We track p5, p25, p50(median), p75, p95 for each trade step
+    const calcPercentile = (arr, p) => {
+        if (arr.length === 0) return initialCapital;
+        if (arr.length === 1) return arr[0];
+        const sorted = [...arr].sort((a, b) => a - b);
+        const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor(p * sorted.length) - 1));
+        return sorted[idx];
+    };
+
+    const equityBands = {
+        labels: Array.from({ length: tradesPerRun }, (_, i) => `T${i + 1}`),
+        p5: perStepEquities.map(eqs => parseFloat(calcPercentile(eqs, 0.05).toFixed(2))),
+        p25: perStepEquities.map(eqs => parseFloat(calcPercentile(eqs, 0.25).toFixed(2))),
+        median: perStepEquities.map(eqs => parseFloat(calcPercentile(eqs, 0.50).toFixed(2))),
+        p75: perStepEquities.map(eqs => parseFloat(calcPercentile(eqs, 0.75).toFixed(2))),
+        p95: perStepEquities.map(eqs => parseFloat(calcPercentile(eqs, 0.95).toFixed(2)))
+    };
 
     // Sort for percentile calculations
     terminalEquities.sort((a, b) => a - b);
@@ -172,6 +197,10 @@ function runSimulation(journal, options = {}) {
                 maxDrawdown: parseFloat(e.maxDrawdown.toFixed(2)),
                 wins: e.wins
             })),
+
+        // Equity percentile bands for fan chart visualization
+        // Shows p5/p25/median/p75/p95 at each trade step
+        equityBands,
 
         generatedAt: new Date().toISOString()
     };

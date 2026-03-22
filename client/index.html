@@ -904,6 +904,49 @@ Kliknij <strong>▶ Run</strong> aby uruchomić 1000 symulacji Monte Carlo na kr
 </div>
 </div>
 </div>
+<!-- Attribution Card -->
+<div class="card" style="margin-top:16px" id="attributionCard">
+<div class="card-header">📊 P&L Attribution <button onclick="loadAttribution()" id="attrLoadBtn" style="margin-left:auto;background:var(--bg);border:1px solid var(--border);color:var(--blue);padding:4px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">↻</button></div>
+<div class="card-body" id="attrBody">
+<div id="attrEmpty" style="text-align:center;color:var(--text2);font-size:.7rem;padding:20px">
+Click <strong>↻</strong> to load P&L attribution from trade journal
+</div>
+<div id="attrResults" style="display:none">
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:12px">
+<div class="metric-box"><div class="metric-label">Total Trades</div><div class="metric-value" id="attrTotalTrades">0</div></div>
+<div class="metric-box"><div class="metric-label">P&L %</div><div class="metric-value" id="attrTotalPnl">0%</div></div>
+<div class="metric-box"><div class="metric-label">Win Rate</div><div class="metric-value green" id="attrWinRate">0%</div></div>
+<div class="metric-box"><div class="metric-label">Profit Factor</div><div class="metric-value blue" id="attrProfitFactor">--</div></div>
+</div>
+<div style="display:flex;gap:4px;margin-bottom:10px">
+<button class="btn" id="attrTabStrategy" onclick="showAttrTab('strategy')" style="font-size:.6rem;padding:4px 8px;background:linear-gradient(135deg,#58a6ff,#1f6feb)">Strategy</button>
+<button class="btn" id="attrTabAsset" onclick="showAttrTab('asset')" style="font-size:.6rem;padding:4px 8px;background:var(--bg2)">Asset</button>
+<button class="btn" id="attrTabExit" onclick="showAttrTab('exit')" style="font-size:.6rem;padding:4px 8px;background:var(--bg2)">Exit</button>
+<button class="btn" id="attrTabDay" onclick="showAttrTab('day')" style="font-size:.6rem;padding:4px 8px;background:var(--bg2)">Daily</button>
+</div>
+<div id="attrStrategyContent">
+<div id="attrStrategyBars" style="font-size:.6rem"></div>
+</div>
+<div id="attrAssetContent" style="display:none">
+<div id="attrAssetBars" style="font-size:.6rem"></div>
+</div>
+<div id="attrExitContent" style="display:none">
+<div id="attrExitBars" style="font-size:.6rem"></div>
+</div>
+<div id="attrDayContent" style="display:none;max-height:150px;overflow-y:auto">
+<table style="width:100%;border-collapse:collapse;font-size:.6rem">
+<thead><tr style="color:var(--text2)"><th>Day</th><th>Trades</th><th>P&L%</th><th>WR</th></tr></thead>
+<tbody id="attrDayRows"></tbody>
+</table>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+<div class="metric-box"><div class="metric-label">🏆 Best Trade</div><div class="metric-value green" id="attrBestTrade">--</div></div>
+<div class="metric-box"><div class="metric-label">💀 Worst Trade</div><div class="metric-value red" id="attrWorstTrade">--</div></div>
+</div>
+</div>
+</div>
+</div>
+
 <!-- Trade Journal Card -->
 <div class="card" style="margin-top:16px" id="tradeJournalCard">
 <div class="card-header">📖 Trade Journal <button onclick="toggleJournal()" style="margin-left:auto;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px;font-size:.6rem;cursor:pointer">📜</button></div>
@@ -2866,6 +2909,76 @@ async function runStrategyCompare() {
     } finally {
         btn.disabled = false;
     }
+}
+
+let currentAttrTab = 'strategy';
+async function loadAttribution() {
+    const btn = document.getElementById('attrLoadBtn');
+    const empty = document.getElementById('attrEmpty');
+    const results = document.getElementById('attrResults');
+    btn.disabled = true;
+    try {
+        const r = await fetch('/api/attribution').then(res => res.json());
+        if (r.error) { alert(r.error); return; }
+        empty.style.display = 'none';
+        results.style.display = 'block';
+        document.getElementById('attrTotalTrades').textContent = r.summary.totalTrades;
+        const pnl = parseFloat(r.summary.totalPnl);
+        document.getElementById('attrTotalPnl').textContent = (pnl >= 0 ? '+' : '') + r.summary.totalPnl + '%';
+        document.getElementById('attrTotalPnl').className = 'metric-value ' + (pnl >= 0 ? 'green' : 'red');
+        document.getElementById('attrWinRate').textContent = r.summary.winRate + '%';
+        document.getElementById('attrProfitFactor').textContent = r.summary.profitFactor;
+        if (r.bestTrade) document.getElementById('attrBestTrade').textContent = '+' + r.bestTrade.pnlPercent + '% (' + r.bestTrade.strategy + ')';
+        if (r.worstTrade) document.getElementById('attrWorstTrade').textContent = r.worstTrade.pnlPercent + '% (' + r.worstTrade.strategy + ')';
+        renderAttrStrategy(r.byStrategy);
+        renderAttrAsset(r.byAsset);
+        renderAttrExit(r.byExitReason);
+        renderAttrDay(r.dailyBreakdown);
+    } catch(e) { alert('Attribution error: ' + e.message); }
+    btn.disabled = false;
+}
+function showAttrTab(tab) {
+    currentAttrTab = tab;
+    ['strategy','asset','exit','day'].forEach(t => {
+        document.getElementById('attr' + t.charAt(0).toUpperCase() + t.slice(1) + 'Content').style.display = 'none';
+        document.getElementById('attrTab' + t.charAt(0).toUpperCase() + t.slice(1)).style.background = 'var(--bg2)';
+    });
+    document.getElementById('attr' + tab.charAt(0).toUpperCase() + tab.slice(1) + 'Content').style.display = 'block';
+    document.getElementById('attrTab' + tab.charAt(0).toUpperCase() + tab.slice(1)).style.background = 'linear-gradient(135deg,#58a6ff,#1f6feb)';
+}
+function renderAttrStrategy(data) {
+    const container = document.getElementById('attrStrategyBars');
+    const sorted = Object.entries(data).sort(([,a],[,b]) => parseFloat(b.totalPnl) - parseFloat(a.totalPnl));
+    const maxPnl = Math.max(...sorted.map(([,d]) => Math.abs(parseFloat(d.totalPnl))), 0.01);
+    container.innerHTML = sorted.map(([strat, d]) => {
+        const pnl = parseFloat(d.totalPnl);
+        const pct = Math.abs(pnl / maxPnl * 100).toFixed(1);
+        const bar = pct + '%';
+        const color = strat.includes('trend') ? '#58a6ff' : strat.includes('mean') ? '#a371f7' : strat.includes('momentum') ? '#f85149' : strat.includes('scalping') ? '#3fb950' : strat.includes('grid') ? '#f0883e' : strat.includes('macd') ? '#79c0ff' : 'var(--text)';
+        return `<div style="margin-bottom:6px">
+<div style="display:flex;justify-content:space-between"><span>${strat}</span><span>${d.trades}tr <span style="color:${pnl>=0?'var(--green)':'var(--red)'}">${pnl>=0?'+':''}${d.totalPnl}%</span></span></div>
+<div style="background:var(--bg);border-radius:4px;height:6px;margin:2px 0"><div style="width:${bar};background:${color};height:6px;border-radius:4px;max-width:100%"></div></div>
+<div style="display:flex;justify-content:space-between;font-size:.55rem;color:var(--text2)"><span>WR ${d.winRate}%</span><span>PF ${d.profitFactor}</span><span>Avg ${d.avgPnl}%</span></div></div>`;
+    }).join('');
+}
+function renderAttrAsset(data) {
+    const container = document.getElementById('attrAssetBars');
+    Object.entries(data).forEach(([asset, d]) => {
+        const pnl = parseFloat(d.totalPnl);
+        const pct = Math.abs(pnl).toFixed(2);
+        container.innerHTML += `<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between"><span>${asset}</span><span style="color:${pnl>=0?'var(--green)':'var(--red)'}">${pnl>=0?'+':''}${d.totalPnl}% (${d.pnlContribution}%)</span></div><div style="font-size:.55rem;color:var(--text2)">${d.trades} trades | WR ${d.winRate}%</div></div>`;
+    });
+}
+function renderAttrExit(data) {
+    const container = document.getElementById('attrExitBars');
+    Object.entries(data).sort(([,a],[,b]) => parseFloat(b.totalPnl) - parseFloat(a.totalPnl)).forEach(([reason, d]) => {
+        const pnl = parseFloat(d.totalPnl);
+        container.innerHTML += `<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between"><span>${reason}</span><span style="color:${pnl>=0?'var(--green)':'var(--red)'}">${pnl>=0?'+':''}${d.totalPnl}%</span></div><div style="font-size:.55rem;color:var(--text2)">${d.trades} exits | Avg ${d.avgPnl}%</div></div>`;
+    });
+}
+function renderAttrDay(days) {
+    const tbody = document.getElementById('attrDayRows');
+    tbody.innerHTML = (days || []).map(d => `<tr style="color:${d.isPositive?'var(--green)':'var(--red)'}"><td>${d.day.slice(5)}</td><td>${d.trades}</td><td>${d.pnl >= 0 ? '+' : ''}${d.pnl}%</td><td>${d.winRate}%</td></tr>`).join('');
 }
 
 async function runMonteCarlo() {

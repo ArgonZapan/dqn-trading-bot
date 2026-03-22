@@ -19,6 +19,7 @@ const Rebalancer = require('../src/rebalancer');
 const { sentimentAnalyzer } = require('../src/sentimentAnalyzer');
 const VolatilityRegime = require('../src/volatilityRegime');
 const { MLFeatures } = require('../src/mlFeatures');
+const { calculateAttribution } = require('../src/attribution');
 
 // State
 let prices = { btc: 0, eth: 0, sol: 0 };
@@ -2287,6 +2288,13 @@ const server = http.createServer(async (req, res) => {
     }
     
     // ─── Trade Journal ─────────────────────────────────────────────────────────
+
+    // GET /api/attribution - P&L attribution breakdown
+    if (url === '/api/attribution') {
+        const attribution = calculateAttribution({ minTrades: 1 });
+        res.json(attribution);
+        return;
+    }
     
     // GET /api/trade-journal - list trades with pagination
     if (url.startsWith('/api/trade-journal')) {

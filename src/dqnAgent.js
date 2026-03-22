@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 class DQNAgent {
-    constructor(stateSize = 313, actionSize = 4) {  // 313: 60*5(OHLCV) + 5(volume) + position features(6) + pnl(5) + volatility(3) + misc(3) + returns(4) + sentiment(1)
+    constructor(stateSize = 394, actionSize = 4) {  // 394: 60*5(OHLCV) + 60(volume) + position(3) + pnl(3) + timing/vol(6) + returns(4) + sentiment(1) + ML features(17) = 394
         this.stateSize = stateSize;
         this.actionSize = actionSize;
         
@@ -113,6 +113,27 @@ class DQNAgent {
         else arrays.push(0, 0, 0, 0);
         // Market sentiment (1) - znormalizowane 0-1 z sentimentAnalyzer
         arrays.push(state.sentiment !== undefined ? state.sentiment : 0.5);
+
+        // ML Features - pattern recognition, prediction, anomaly (17 features)
+        // These come from MLFeatures.getMLFeatures() when mlEnabled
+        arrays.push(state.patternDoubleBottom || 0);
+        arrays.push(state.patternDoubleTop || 0);
+        arrays.push(state.patternHeadShoulders || 0);
+        arrays.push(state.patternUptrend || 0);
+        arrays.push(state.patternDowntrend || 0);
+        arrays.push(state.patternConfidence || 0);
+        arrays.push(state.predictedDirectionUp || 0);
+        arrays.push(state.predictedDirectionDown || 0);
+        arrays.push(state.predictedDirectionNeutral || 0);
+        arrays.push(state.predictionConfidence || 0);
+        arrays.push(state.predictedChangePct || 0);
+        arrays.push(state.isAnomaly || 0);
+        arrays.push(state.priceZScore || 0);
+        arrays.push(state.volumeZScore || 0);
+        arrays.push(state.trendSlope || 0);
+        arrays.push(state.priceVsMA || 0);
+        arrays.push(state.totalML || 0); // aggregate ML signal
+
         // Pad or truncate to exactly stateSize
         while (arrays.length < this.stateSize) {
             arrays.push(0);
@@ -120,6 +141,11 @@ class DQNAgent {
         return arrays.slice(0, this.stateSize);
     }
 
+    /**
+     * Select action using DQN + ML-driven bias
+     * When ML features are strong (high confidence), add a small bias toward predicted direction
+     * This is NOT overriding the DQN - just nudging Q-values when the signal is strong
+     */
     act(state) {
         if (Math.random() < this.epsilon) {
             return Math.floor(Math.random() * this.actionSize);
@@ -128,9 +154,55 @@ class DQNAgent {
         return tf.tidy(() => {
             const flat = this.flattenState(state);
             const stateTensor = tf.tensor2d([flat], [1, flat.length]);
-            const prediction = this.onlineModel.predict(stateTensor);
+            let qValues = this.onlineModel.predict(stateTensor);
             stateTensor.dispose();
-            return prediction.argMax(1).dataSync()[0];
+
+            // ML-driven bias: nudge Q-values when ML prediction confidence is high
+            // Only apply when ML features are present and confidence > 60%
+            const mlConfidence = state.predictionConfidence || 0;
+            if (mlConfidence > 0.6 && this.actionSize >= 3) {
+                const biasStrength = 0.15; // Max 15% nudge
+                const bias = biasStrength * Math.min((mlConfidence - 0.6) / 0.4, 1); // Scale 0.6-1.0 → 0-biasStrength
+
+                // Get Q values as array
+                let qData = qValues.dataSync();
+
+                // Bias toward predicted direction (from MLFeatures.predictNextPrice)
+                // action 0=HOLD, 1=LONG, 2=SHORT (but env uses 0=HOLD, 1=LONG, 2=CLOSE for shorts)
+                // Our env: 0=FLAT/HOLD, 1=LONG, 2=SHORT (and CLOSE maps to 0)
+                // For the agent, action 1=LONG, 2=SHORT (action 0=HOLD)
+                if (state.predictedDirectionUp && state.predictedDirectionUp > 0.5) {
+                    // ML says UP → boost LONG Q-value slightly
+                    qData[1] += bias;
+                }
+                if (state.predictedDirectionDown && state.predictedDirectionDown > 0.5) {
+                    // ML says DOWN → boost SHORT Q-value slightly
+                    qData[2] += bias;
+                }
+                if (state.patternDoubleBottom && state.patternDoubleBottom > 0.5 && state.patternConfidence > 0.6) {
+                    // Double bottom detected → small boost to LONG
+                    qData[1] += bias * 0.5;
+                }
+                if (state.patternDoubleTop && state.patternDoubleTop > 0.5 && state.patternConfidence > 0.6) {
+                    // Double top detected → small boost to SHORT
+                    qData[2] += bias * 0.5;
+                }
+                if (state.isAnomaly && state.isAnomaly > 0) {
+                    // Anomaly detected → reduce position-taking (slight hold bias)
+                    qData[0] += bias * 0.3;
+                    qData[1] -= bias * 0.2;
+                    qData[2] -= bias * 0.2;
+                }
+
+                // Return argmax of biased Q-values
+                const maxIdx = qData.indexOf(Math.max(...qData));
+                qValues.dispose();
+                return maxIdx;
+            }
+
+            const result = qValues.argMax(1).dataSync()[0];
+            qValues.dispose();
+            return result;
         });
     }
 

@@ -1942,6 +1942,21 @@ const server = http.createServer(async (req, res) => {
                     ? Math.sqrt(returns.reduce((s, r) => s + Math.pow(r - avgR, 2), 0) / (returns.length - 1)) : 0;
                 const sharpe = stdR > 0 ? (avgR * Math.sqrt(252)) / stdR : 0;
 
+                // Sortino Ratio (downside deviation only)
+                const negReturns = returns.filter(r => r < 0);
+                const downStd = negReturns.length > 1
+                    ? Math.sqrt(negReturns.reduce((s, r) => s + Math.pow(r - avgR, 2), 0) / (negReturns.length - 1)) : 0;
+                const sortino = downStd > 0 ? (avgR * Math.sqrt(252)) / downStd : 0;
+
+                // Calmar Ratio (annualized return / max drawdown)
+                const annulReturn = pnlPct / 100;
+                const maxDDPctSafe = maxDDPct > 0 ? maxDDPct / 100 : 0.001;
+                const calmar = maxDDPctSafe > 0 ? annulReturn / maxDDPctSafe : 0;
+
+                // Annualized Return (5m candles ≈ 288/day)
+                const numDays = trades.length > 0 ? Math.max(trades.length / 288, 0.1) : 1;
+                const annulReturnPct = (Math.pow(finalEquity / CAPITAL, 365 / numDays) - 1) * 100;
+
                 const grossWin = wins.reduce((s, t) => s + t.pnl, 0);
                 const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
                 const pf = grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? 99 : 0;
@@ -1957,6 +1972,9 @@ const server = http.createServer(async (req, res) => {
                     maxDrawdown: maxDD,
                     maxDrawdownPercent: maxDDPct,
                     sharpeRatio: sharpe,
+                    sortinoRatio: sortino,
+                    calmarRatio: calmar,
+                    annulReturnPct,
                     profitFactor: pf,
                     avgWin: wins.length ? grossWin / wins.length : 0,
                     avgLoss: losses.length ? grossLoss / losses.length : 0,
@@ -1979,6 +1997,7 @@ const server = http.createServer(async (req, res) => {
                         winRate: 0, totalPnl: 0, totalPnlPercent: 0,
                         finalEquity: CAPITAL, maxDrawdown: 0,
                         maxDrawdownPercent: 0, sharpeRatio: 0,
+                        sortinoRatio: 0, calmarRatio: 0, annulReturnPct: 0,
                         profitFactor: 0, avgWin: 0, avgLoss: 0,
                         error: results[i] === null ? 'insufficient data' : 'failed'
                     })
@@ -1989,6 +2008,9 @@ const server = http.createServer(async (req, res) => {
                     r.maxDrawdown = parseFloat(r.maxDrawdown.toFixed(2));
                     r.maxDrawdownPercent = parseFloat(r.maxDrawdownPercent.toFixed(2));
                     r.sharpeRatio = parseFloat(r.sharpeRatio.toFixed(2));
+                    r.sortinoRatio = parseFloat(r.sortinoRatio.toFixed(2));
+                    r.calmarRatio = parseFloat(r.calmarRatio.toFixed(2));
+                    r.annulReturnPct = parseFloat(r.annulReturnPct.toFixed(2));
                     r.profitFactor = parseFloat(r.profitFactor.toFixed(2));
                     r.avgWin = parseFloat(r.avgWin.toFixed(4));
                     r.avgLoss = parseFloat(r.avgLoss.toFixed(4));
@@ -2002,14 +2024,18 @@ const server = http.createServer(async (req, res) => {
                 byPnl.forEach((s, i) => s.rankPnl = i + 1);
                 const bySharpe = [...comparison].sort((a, b) => b.sharpeRatio - a.sharpeRatio);
                 bySharpe.forEach((s, i) => s.rankSharpe = i + 1);
+                const bySortino = [...comparison].sort((a, b) => b.sortinoRatio - a.sortinoRatio);
+                bySortino.forEach((s, i) => s.rankSortino = i + 1);
+                const byCalmar = [...comparison].sort((a, b) => b.calmarRatio - a.calmarRatio);
+                byCalmar.forEach((s, i) => s.rankCalmar = i + 1);
                 const byWinRate = [...comparison].sort((a, b) => b.winRate - a.winRate);
                 byWinRate.forEach((s, i) => s.rankWinRate = i + 1);
                 const byPF = [...comparison].sort((a, b) => b.profitFactor - a.profitFactor);
                 byPF.forEach((s, i) => s.rankPF = i + 1);
 
-                // Best overall (average rank)
+                // Best overall (average rank across 6 metrics)
                 comparison.forEach(s => {
-                    s.avgRank = parseFloat(((s.rankPnl + s.rankSharpe + s.rankWinRate + s.rankPF) / 4).toFixed(1));
+                    s.avgRank = parseFloat(((s.rankPnl + s.rankSharpe + s.rankSortino + s.rankCalmar + s.rankWinRate + s.rankPF) / 6).toFixed(1));
                 });
                 comparison.sort((a, b) => a.avgRank - b.avgRank);
 

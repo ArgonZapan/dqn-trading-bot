@@ -722,6 +722,8 @@ Kliknij <strong>⚡ Compare</strong> aby przetestować wszystkie strategie na os
 <button class="strat-tab active" data-metric="totalPnlPercent" onclick="setStratMetric('totalPnlPercent')" style="background:var(--blue);color:#fff;border:none;padding:5px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">P&L %</button>
 <button class="strat-tab" data-metric="winRate" onclick="setStratMetric('winRate')" style="background:var(--bg);color:var(--text2);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">Win Rate</button>
 <button class="strat-tab" data-metric="sharpeRatio" onclick="setStratMetric('sharpeRatio')" style="background:var(--bg);color:var(--text2);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">Sharpe</button>
+<button class="strat-tab" data-metric="sortinoRatio" onclick="setStratMetric('sortinoRatio')" style="background:var(--bg);color:var(--text2);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">Sortino</button>
+<button class="strat-tab" data-metric="calmarRatio" onclick="setStratMetric('calmarRatio')" style="background:var(--bg);color:var(--text2);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">Calmar</button>
 <button class="strat-tab" data-metric="profitFactor" onclick="setStratMetric('profitFactor')" style="background:var(--bg);color:var(--text2);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:.6rem;cursor:pointer">Profit Factor</button>
 </div>
 <!-- Bar chart -->
@@ -2807,13 +2809,15 @@ function renderStratCompare(comparison) {
 
     const metric = currentStratMetric;
     const metricLabels = {
-        totalPnlPercent: 'P&L %', winRate: 'Win Rate %', sharpeRatio: 'Sharpe', profitFactor: 'Profit Factor'
+        totalPnlPercent: 'P&L %', winRate: 'Win Rate %', sharpeRatio: 'Sharpe', sortinoRatio: 'Sortino', calmarRatio: 'Calmar', profitFactor: 'Profit Factor'
     };
     const metricColors = {
         totalPnlPercent: (v) => v >= 0 ? '#3fb950' : '#f85149',
         winRate: '#58a6ff',
         sharpeRatio: '#a371f7',
-        profitFactor: '#f0883e'
+        sortinoRatio: '#ce9dff',
+        calmarRatio: '#f0883e',
+        profitFactor: '#ffa657'
     };
 
     const sorted = [...comparison].sort((a, b) => b[metric] - a[metric]);
@@ -2847,7 +2851,7 @@ function renderStratCompare(comparison) {
                         const s = sorted[ctx.dataIndex];
                         return [
                             `${metricLabels[metric]}: ${ctx.raw >= 0 ? '+' : ''}${parseFloat(ctx.raw).toFixed(2)}`,
-                            `Rank #${s.rankPnl} P&L | #${s.rankSharpe} Sharpe | #${s.rankWinRate} WR | #${s.rankPF} PF`,
+                            `Rank P&L:#${s.rankPnl} Sharpe:#${s.rankSharpe} Sortino:#${s.rankSortino} Calmar:#${s.rankCalmar} WR:#${s.rankWinRate} PF:#${s.rankPF}`,
                             `Avg Rank: ${s.avgRank}`
                         ];
                     }
@@ -2871,26 +2875,32 @@ function renderStratCompare(comparison) {
     table.innerHTML = `
     <table style="width:100%;border-collapse:collapse">
         <thead>
-            <tr style="color:var(--text2);text-transform:uppercase;font-size:.55rem">
-                <th style="padding:4px 6px;text-align:left">Strategy</th>
-                <th style="padding:4px 6px;text-align:right">P&L %</th>
-                <th style="padding:4px 6px;text-align:right">Win%</th>
-                <th style="padding:4px 6px;text-align:right">Sharpe</th>
-                <th style="padding:4px 6px;text-align:right">PF</th>
-                <th style="padding:4px 6px;text-align:right">MaxDD%</th>
-                <th style="padding:4px 6px;text-align:right">Avg Rank</th>
+            <tr style="color:var(--text2);text-transform:uppercase;font-size:.5rem">
+                <th style="padding:3px 4px;text-align:left">Strategy</th>
+                <th style="padding:3px 4px;text-align:right">P&L %</th>
+                <th style="padding:3px 4px;text-align:right">Ann%</th>
+                <th style="padding:3px 4px;text-align:right">Win%</th>
+                <th style="padding:3px 4px;text-align:right">Sharpe</th>
+                <th style="padding:3px 4px;text-align:right">Sortino</th>
+                <th style="padding:3px 4px;text-align:right">Calmar</th>
+                <th style="padding:3px 4px;text-align:right">PF</th>
+                <th style="padding:3px 4px;text-align:right">MaxDD%</th>
+                <th style="padding:3px 4px;text-align:right">AvgR</th>
             </tr>
         </thead>
         <tbody>
             ${sorted.map((s, i) => `
             <tr style="border-bottom:1px solid var(--border);${i === 0 ? 'background:rgba(63,185,80,.1)' : ''}" onclick="selectPaperStrategy('${s.strategyId}')" title="Click to use this strategy">
-                <td style="padding:5px 6px;font-weight:${i===0?'700':'400'};color:${i===0?'var(--green)':'var(--text)'}">${i===0?'🏆 ':''}${s.strategyName}</td>
-                <td style="padding:5px 6px;text-align:right;color:${s.totalPnlPercent>=0?'var(--green)':'var(--red)'}">${s.totalPnlPercent>=0?'+':''}${s.totalPnlPercent.toFixed(3)}%</td>
-                <td style="padding:5px 6px;text-align:right;color:var(--blue)">${s.winRate.toFixed(1)}%</td>
-                <td style="padding:5px 6px;text-align:right;color:var(--purple)">${s.sharpeRatio.toFixed(2)}</td>
-                <td style="padding:5px 6px;text-align:right;color:var(--orange)">${s.profitFactor > 10 ? '∞' : s.profitFactor.toFixed(2)}</td>
-                <td style="padding:5px 6px;text-align:right;color:${s.maxDrawdownPercent>10?'var(--red)':'var(--text2)'}">${s.maxDrawdownPercent.toFixed(2)}%</td>
-                <td style="padding:5px 6px;text-align:right;font-weight:700;color:var(--blue)">${s.avgRank}</td>
+                <td style="padding:4px 4px;font-weight:${i===0?'700':'400'};color:${i===0?'var(--green)':'var(--text)'};font-size:.6rem">${i===0?'🏆 ':''}${s.strategyName}</td>
+                <td style="padding:4px 4px;text-align:right;color:${s.totalPnlPercent>=0?'var(--green)':'var(--red)'};font-size:.6rem">${s.totalPnlPercent>=0?'+':''}${s.totalPnlPercent.toFixed(3)}%</td>
+                <td style="padding:4px 4px;text-align:right;color:${s.annulReturnPct>=0?'var(--green)':'var(--red)'};font-size:.6rem">${s.annulReturnPct>=0?'+':''}${s.annulReturnPct.toFixed(1)}%</td>
+                <td style="padding:4px 4px;text-align:right;color:var(--blue);font-size:.6rem">${s.winRate.toFixed(1)}%</td>
+                <td style="padding:4px 4px;text-align:right;color:var(--purple);font-size:.6rem">${s.sharpeRatio.toFixed(2)}</td>
+                <td style="padding:4px 4px;text-align:right;color:#ce9dff;font-size:.6rem">${s.sortinoRatio.toFixed(2)}</td>
+                <td style="padding:4px 4px;text-align:right;color:var(--orange);font-size:.6rem">${Math.abs(s.calmarRatio) > 99 ? '∞' : s.calmarRatio.toFixed(2)}</td>
+                <td style="padding:4px 4px;text-align:right;color:#ffa657;font-size:.6rem">${s.profitFactor > 10 ? '∞' : s.profitFactor.toFixed(2)}</td>
+                <td style="padding:4px 4px;text-align:right;color:${s.maxDrawdownPercent>10?'var(--red)':'var(--text2)'};font-size:.6rem">${s.maxDrawdownPercent.toFixed(2)}%</td>
+                <td style="padding:4px 4px;text-align:right;font-weight:700;color:var(--blue);font-size:.6rem">${s.avgRank}</td>
             </tr>`).join('')}
         </tbody>
     </table>`;
